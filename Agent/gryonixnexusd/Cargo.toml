@@ -520,7 +520,7 @@ name = "gryonixnexusd"
 # the list draws, `ss` supplies the addresses with an SSH session open (the app
 # reaches this agent through a tunnel and cannot see its own), and every
 # mutating call re-reads the list from the host rather than echoing the request.
-version = "0.0.111"
+version = "0.0.112"
 edition = "2021"
 rust-version = "1.75"
 publish = false

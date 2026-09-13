@@ -104,15 +104,22 @@ ProtectSystem=full
 # starts, the same answer /etc/caddy and /etc/nftables.d already have.
 #
 # /usr/local/bin is the eighth, and unlike the rest it is a DIRECTORY grant
-# for a single-file reason: `agent_update.rs`'s ApplyAgentUpdate stages the
-# rebuilt binary in the agent's own state directory and `rename()`s it into
-# place, and rename(2) needs its destination's PARENT directory writable —
-# systemd bind-mounts a single FILE path read-write too, but that mounts only
-# the file's own inode, not the directory entry a rename has to create or
-# replace, and (being its own separate mount point) may not even share a
-# filesystem with the state directory the staged binary comes from, which
-# rename(2) requires. The directory is the smallest grant that actually
-# supports the operation this feature needs.
+# for a single-file reason: `agent_update.rs`'s ApplyAgentUpdate replaces the
+# live binary with `rename()`, and rename(2) needs its destination's PARENT
+# directory writable — a single FILE path bind-mounted read-write mounts only
+# that file's own inode, not the directory entry a rename has to create or
+# replace. The directory is the smallest grant that supports that.
+#
+# It is NOT, on its own, enough to make the whole swap one rename(2): proven
+# live on `a.grypak.de` (2026-09-13), this exception and the agent's state
+# directory land on different mounts under the sandbox, so a rename FROM the
+# state dir's staging tree TO here fails EXDEV even with this line present.
+# `swap_binary()` works around that itself — it copies the rebuilt binary
+# into this directory first (crossing the filesystem boundary with a copy,
+# which does not require same-device) and only `rename()`s from that staged
+# copy, so the one step that actually replaces the live binary is still a
+# same-filesystem rename and stays atomic. This grant is what makes THAT
+# rename legal; it was never expected to make the cross-device one work.
 # **Bootstraps itself, one version late.** A host already running an OLDER
 # unit (without this line) cannot self-update INTO this feature — the first
 # jump still has to arrive through the existing app-triggered SSH rebuild,

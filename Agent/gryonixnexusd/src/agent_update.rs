@@ -603,15 +603,32 @@ async fn smoke_test(binary: &std::path::Path, expected_version: &str) -> Result<
 /// being replaced, and `rename()` re-points the directory entry without
 /// touching the inode this process is still executing from — the standard
 /// way a running Unix binary replaces itself. An open-for-write on the same
-/// path would fail `ETXTBSY` instead. Needs `/usr/local/bin` itself writable
-/// under the sandbox, not just the one file — see the unit's own
-/// `ReadWritePaths` comment for why a single-file grant would not actually
-/// support this.
+/// path would fail `ETXTBSY` instead.
+///
+/// `built` is NOT renamed directly: it lives under the state dir's staging
+/// tree, and `rename(2)` requires both paths to share a filesystem. Proven
+/// live on `a.grypak.de` (2026-09-13) that they do not, even with the whole
+/// `/usr/local/bin` directory granted writable — systemd's `ReadWritePaths`
+/// exceptions under `ProtectSystem=full` land on a different mount than the
+/// state dir, so a straight `rename(built, bin_dest())` fails `EXDEV`
+/// ("Cross-device link"). The fix is to copy the bytes across that boundary
+/// FIRST, landing next to the destination (guaranteed same filesystem), and
+/// only `rename()` from there — the swap that actually replaces the live
+/// binary is atomic by construction, and the cross-filesystem step never
+/// touches the live path.
 fn swap_binary(built: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(built, std::fs::Permissions::from_mode(0o755))
-        .map_err(|err| format!("could not set the new binary's mode: {err}"))?;
-    std::fs::rename(built, bin_dest()).map_err(|err| format!("{err}"))
+    let dest = bin_dest();
+    let staged = dest.with_extension("new");
+    std::fs::copy(built, &staged).map_err(|err| format!("could not stage the new binary next to the old one: {err}"))?;
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).map_err(|err| {
+        let _ = std::fs::remove_file(&staged);
+        format!("could not set the new binary's mode: {err}")
+    })?;
+    std::fs::rename(&staged, &dest).map_err(|err| {
+        let _ = std::fs::remove_file(&staged);
+        format!("{err}")
+    })
 }
 
 #[cfg(test)]
@@ -898,7 +915,37 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(std::fs::read(&dest).unwrap(), b"new contents");
-        assert!(!built.exists(), "rename() must leave nothing at the source path");
+        assert!(built.exists(), "the copy source is untouched — run_apply, not swap_binary, owns the staging tree's cleanup");
+        assert!(!dest.with_extension("new").exists(), "the staged copy must be renamed away, not left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The bug proven live on `a.grypak.de` (2026-09-13): `built` and `dest`
+    /// on different filesystems must still succeed, because `std::fs::copy`
+    /// (not `rename`) crosses that boundary.
+    #[test]
+    fn swap_binary_survives_a_cross_filesystem_source() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        // /dev/shm is tmpfs — reliably a different filesystem than the OS
+        // temp dir on any real machine, unlike two paths under the same
+        // sandbox() call, which share a device and would not exercise EXDEV.
+        let shm = std::path::PathBuf::from("/dev/shm");
+        if !shm.is_dir() {
+            return; // no tmpfs on this machine (e.g. macOS) — nothing to prove here
+        }
+        let built = shm.join(format!("gryonixnexusd-swap-test-{}", std::process::id()));
+        std::fs::write(&built, b"new contents").unwrap();
+        let dir = sandbox("swap-xdev");
+        let dest = dir.join("installed");
+        std::fs::write(&dest, b"old contents").unwrap();
+
+        std::env::set_var("GRYONIXNEXUSD_AGENT_UPDATE_BIN_DEST", &dest);
+        let result = swap_binary(&built);
+        std::env::remove_var("GRYONIXNEXUSD_AGENT_UPDATE_BIN_DEST");
+
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new contents");
+        let _ = std::fs::remove_file(&built);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
