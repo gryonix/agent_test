@@ -1,6 +1,7 @@
 {
-  "version": "0.0.113",
-  "tag": "v0.0.113",
-  "url": "https://codeload.github.com/gryonix/agent_test/tar.gz/refs/tags/v0.0.113",
-  "sha256": "57cb46954e2fee027e7a0cf0ecbeed69d2eff2d77b7ba606c1e1c8ff7979e22b"
+  "version": "0.0.114",
+  "tag": "v0.0.114",
+  "url": "https://codeload.github.com/gryonix/agent_test/tar.gz/refs/tags/v0.0.114",
+  "sha256": "1a536ddb49f8db4e653d43ce7e849e97dd146d3a6e1045d7e8216193af1d06bb",
+  "signature": "XgT3xQWdj672PNsX2+wjFDhi1JwrBphFEMLR7LeF2YClLrcCm8Z/bPuBggFPlBTsZgUi1TVjPx+Ef+X4RngwDg=="
 }
