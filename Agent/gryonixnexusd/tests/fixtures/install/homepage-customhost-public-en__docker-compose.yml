@@ -1,0 +1,15 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v1.4.5
+    container_name: homepage
+    restart: unless-stopped
+    environment:
+      # Read out of the image's own middleware, not its docs: a
+      # request whose Host is not in this list is answered with
+      # HTTP 400 and nothing else. Caddy forwards the real Host,
+      # so every name of the site belongs here.
+      HOMEPAGE_ALLOWED_HOSTS: hub.example.com
+    volumes:
+      - /opt/homepage/config:/app/config
+    ports:
+      - "127.0.0.1:8093:3000"

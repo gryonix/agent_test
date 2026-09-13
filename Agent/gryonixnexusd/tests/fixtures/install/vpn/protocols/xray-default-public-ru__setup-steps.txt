@@ -1,0 +1,61 @@
+log "VLESS/Reality: запуск"
+install -d /opt/xray/config
+cat > /opt/xray/gryonixnexus-update.sh <<'EOF_XRAY_UPDATE'
+#!/bin/bash
+# Managed by gryonixNexus — Xray VLESS/Reality update for the Server Dashboard.
+set -euo pipefail
+cd /opt/xray
+docker compose -p xray pull -q
+docker compose -p xray up -d
+EOF_XRAY_UPDATE
+chmod 750 /opt/xray/gryonixnexus-update.sh
+cd /opt/xray
+# First run only: generate the UUID, the x25519 keypair and a shortId
+# on this server, then bake them into the config and the client link.
+if [ ! -f config/config.json ]; then
+  docker pull -q ghcr.io/xtls/xray-core:26.7.11 >/dev/null
+  XRAY_UUID="$(docker run --rm ghcr.io/xtls/xray-core:26.7.11 uuid | tr -d '\r\n')"
+  XRAY_KEYS="$(docker run --rm ghcr.io/xtls/xray-core:26.7.11 x25519)"
+  # Format changed across releases; accept "PrivateKey:" + "Password
+  # (PublicKey):" (26.7), plain "Password:" and the older
+  # "Private key:"/"Public key:". [^:]* swallows the "(PublicKey)" part.
+  XRAY_PRIV="$(printf '%s\n' "$XRAY_KEYS" | sed -n -e 's/^PrivateKey:[[:space:]]*//p' -e 's/^Private key:[[:space:]]*//p' | head -n1)"
+  XRAY_PUB="$(printf '%s\n' "$XRAY_KEYS" | sed -n -e 's/^Password[^:]*:[[:space:]]*//p' -e 's/^Public key:[[:space:]]*//p' | head -n1)"
+  XRAY_SID="$(openssl rand -hex 8)"
+  [ -n "$XRAY_PRIV" ] && [ -n "$XRAY_PUB" ] || fail "xray x25519 returned an empty key"
+  cat > config/config.json <<EOF_XRAY_CONFIG
+{
+    "log": { "loglevel": "warning" },
+    "inbounds": [
+        {
+            "listen": "0.0.0.0",
+            "port": 8443,
+            "protocol": "vless",
+            "settings": {
+                "clients": [ { "id": "${XRAY_UUID}", "flow": "xtls-rprx-vision" } ],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "dest": "www.microsoft.com:443",
+                    "serverNames": [ "www.microsoft.com" ],
+                    "privateKey": "${XRAY_PRIV}",
+                    "shortIds": [ "${XRAY_SID}" ]
+                }
+            },
+            "sniffing": { "enabled": true, "destOverride": [ "http", "tls", "quic" ], "routeOnly": true }
+        }
+    ],
+    "outbounds": [ { "protocol": "freedom", "tag": "direct" } ]
+}
+EOF_XRAY_CONFIG
+  # The client link needs the PUBLIC key + shortId, which are not in the
+  # server config — persist the ready vless:// link for the report.
+  printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#gryonixNexus\n' \
+    "$XRAY_UUID" "vpn.example.com" "8443" "www.microsoft.com" "$XRAY_PUB" "$XRAY_SID" > link.txt
+fi
+chmod 600 config/config.json link.txt
+docker compose -p xray pull -q
+docker compose -p xray up -d

@@ -1,0 +1,69 @@
+#!/usr/sbin/nft -f
+# Managed by gryonixNexus — home-server firewall (default-deny).
+# Mail ports are reachable ONLY from the WireGuard tunnel (from the VPS).
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iif "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+        meta l4proto icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } limit rate 10/second accept
+        meta l4proto ipv6-icmp accept
+        # SSH: consider narrowing the source to your LAN, e.g.:
+        # ip saddr 192.168.1.0/24 tcp dport 22 accept
+        tcp dport 22 accept comment "SSH"
+        iifname "wg0" tcp dport { 80, 443 } accept comment "mail from the tunnel"
+        iifname "wg0" udp dport { 51821 } accept comment "VPN clients"
+        jump gryonixnexus_services
+    }
+
+    chain prerouting {
+        type filter hook prerouting priority mangle; policy accept;
+        # New connections arriving from the relay get a mark so their
+        # replies route back through the tunnel instead of the home
+        # ISP's default gateway — real public client IPs are outside
+        # 10.8.0.0/24, so nothing routes them back here automatically.
+        ct state new iifname "wg0" ct mark set 0x1
+        # Outbound SMTP goes through the relay so it leaves from the address
+        # SPF authorises and PTR names; `!= local` keeps mail ARRIVING
+        # for this host out of it.
+        ct state new tcp dport 25 fib daddr type != local ct mark set 0x1
+        # Restore the mark onto every packet of an already-marked
+        # connection (both directions) so the policy-routing table below
+        # actually sees it — ct mark alone is invisible to `ip rule`.
+        meta mark set ct mark
+    }
+
+    # Every relayed service on this host terminates at a LOCAL
+    # process (Caddy binds the host's own address directly; mail
+    # engines the same) — its replies are OUTPUT packets, never
+    # forwarded ones, so `chain prerouting` above never sees them.
+    # Live-caught 2026-08-08: without this chain, a relayed HTTPS
+    # request's SYN arrived correctly (marked, DNAT-preserved real
+    # client IP and all), but Caddy's SYN-ACK carried no mark, fell
+    # through to the main routing table, and never found its way
+    # back through the tunnel — the connection just hung. `type
+    # route hook output` is nftables' own mechanism for exactly
+    # this: changing a locally-generated packet's mark and having
+    # the kernel redo the route lookup that already happened.
+    chain output {
+        type route hook output priority mangle; policy accept;
+        # Outbound SMTP goes through the relay so it leaves from the address
+        # SPF authorises and PTR names; `!= local` keeps mail ARRIVING
+        # for this host out of it.
+        ct state new tcp dport 25 fib daddr type != local ct mark set 0x1
+        meta mark set ct mark
+    }
+
+        # Filled by the control-plane agent when it installs a service that
+        # needs a port open (`flush chain` + `add rule`, never a reload of
+        # this file). Empty means nothing extra is open.
+        chain gryonixnexus_services {
+        }    # No forward chain: Docker hooks its own drop-policy forward
+    # chain with per-container accepts; a second drop-policy
+    # chain here would override it and cut containers off.
+}
+
+include "/etc/nftables.d/gryonixnexus-*.nft"

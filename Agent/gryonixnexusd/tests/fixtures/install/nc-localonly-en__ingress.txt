@@ -1,0 +1,4 @@
+hostname=files.home.local
+upstreamPort=8081
+adminGuard=true
+upstreamHTTPS=false

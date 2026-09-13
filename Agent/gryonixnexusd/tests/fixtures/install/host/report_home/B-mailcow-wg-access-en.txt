@@ -1,0 +1,54 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "Tunnel:         wg0 -> 203.0.113.10:51820 (full tunnel — outgoing traffic uses the VPS IP)"
+echo "Mail host:      mail.example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo "Backup passphrase (keep it — encrypted backups need it): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Mailcow:      https://mail.example.com  (directory: /opt/mailcow-dockerized)"
+echo "  Administrator: admin"
+echo "  Password: moohoo"
+echo "  This is mailcow's standard password — change it after the first sign-in (System → Administrator)."
+echo "  SMTP/IMAPS use a trusted TLS certificate automatically (synced from Caddy and refreshed on renewal). Right after setup it may briefly be self-signed until Caddy issues the certificate — usually a few minutes."
+MC_KEY="$(grep '^API_KEY=' /opt/mailcow-dockerized/mailcow.conf | tail -n1 | cut -d= -f2-)"
+MC_DKIM_TXT="$(curl -fsSk --max-time 20 -H "X-API-Key: $MC_KEY" \
+  "https://127.0.0.1:18443/api/v1/get/dkim/example.com" 2>/dev/null \
+  | jq -r '.dkim_txt // empty' 2>/dev/null)"
+if [ -n "$MC_DKIM_TXT" ]; then
+  echo "  DKIM DNS record (add as TXT for dkim._domainkey.example.com):"
+  echo "  $MC_DKIM_TXT"
+  # Machine-readable twin of the two lines above: the app shows DKIM
+  # on its own screen after the install, and the human lines are
+  # localized (unparsable). Deliberately ASCII and fixed-shape —
+  # `<marker> <record name> <value>`. Mirrored by ServerControl's
+  # DKIMRecordParser; pinned by tests on both sides.
+  echo "GRYONIXNEXUS_DKIM dkim._domainkey.example.com $MC_DKIM_TXT"
+else
+  echo "  DKIM is not ready yet — re-run the script or check Configuration → ARC/DKIM keys in the mailcow admin UI."
+fi
+echo "Vaultwarden:  https://vault.example.com"
+echo "  Admin panel: https://vault.example.com/admin"
+echo "  Admin token (generated on the server): $(grep '^ADMIN_TOKEN=' /opt/vaultwarden/.env | cut -d= -f2-)"
+echo "  Sign-in: open the URL and create your own account (your email + a master password you choose). The admin token above is only for the /admin panel."
+echo "  Signups: open"
+echo "Nextcloud:    https://files.example.com"
+echo "  Administrator: admin"
+echo "  Password (generated on the server): $(grep '^NEXTCLOUD_ADMIN_PASSWORD=' /opt/nextcloud/.env | cut -d= -f2-)"
+echo "Immich:       https://photos.example.com"
+echo "  IMPORTANT: open this URL right now and create the administrator — until then, anyone who opens the page can register."
+echo "VPN Panel: https://vpn.example.com"
+echo "  Admin panel: https://vpn.example.com"
+echo "  Administrator: $(grep '^ADMIN_USER=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Password (generated on the server): $(grep '^ADMIN_PASSWORD=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Add client devices in the panel: it generates their configs and QR codes."
+

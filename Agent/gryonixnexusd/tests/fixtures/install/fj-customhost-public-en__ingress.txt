@@ -1,0 +1,4 @@
+hostname=code.example.com
+upstreamPort=8083
+adminGuard=true
+upstreamHTTPS=false

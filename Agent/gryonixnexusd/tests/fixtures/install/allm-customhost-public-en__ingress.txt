@@ -1,0 +1,5 @@
+hostname=kb.example.com
+upstreamPort=8100
+adminGuard=true
+upstreamHTTPS=false
+publicPaths=

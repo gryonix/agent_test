@@ -1,0 +1,7 @@
+ai.example.com, ai.example.org, ai.example.net {
+    # gryonixnexus: openclaw
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:8102 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}

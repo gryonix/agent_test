@@ -1,0 +1,40 @@
+---
+- 'Mail':
+    - 'Mailcow':
+        href: https://mail.example.com
+        description: 'A mail server on your own domain: mailboxes, webmail, spam filtering.'
+- 'Passwords':
+    - 'Vaultwarden':
+        href: https://vault.example.com
+        description: 'A password vault for people, with apps and browser extensions.'
+- 'Files':
+    - 'Nextcloud':
+        href: https://files.example.com
+        description: 'File sync and sharing across your devices — your own drive, on your own server.'
+    - 'Seafile':
+        href: https://files.example.com
+        description: 'File sync and sharing across your devices — your own drive, on your own server.'
+- 'Photos':
+    - 'Immich':
+        href: https://photos.example.com
+        description: 'A photo and video library: automatic phone backup, albums, search.'
+- 'Media':
+    - 'Jellyfin':
+        href: https://media.example.com
+        description: 'Streams films, series and music you already own to any device.'
+- 'Git hosting':
+    - 'Forgejo':
+        href: https://git.example.com
+        description: 'Your own Git server: repositories, issues, pull requests.'
+- 'Ad & tracker blocking':
+    - 'AdGuard Home':
+        href: https://dns.example.com
+        description: 'A DNS server for your devices that drops ads, trackers and malware domains before they load.'
+- 'VPN':
+    - 'VPN Panel':
+        href: https://vpn.example.com
+        description: 'An encrypted tunnel into this server from anywhere, with a panel that hands out client profiles.'
+- 'Private network for your devices':
+    - 'Headscale':
+        href: https://mesh.example.com
+        description: 'Links your own phones, laptops and servers straight to each other, wherever they are. Nothing is published to the internet.'

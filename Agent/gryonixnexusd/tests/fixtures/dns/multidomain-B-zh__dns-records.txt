@@ -1,0 +1,251 @@
+; example.com 的 DNS 记录 —— 请在您的 DNS 服务商处添加。
+; 格式：名称  类型  值
+
+; 需要添加的内容 — 下面每个区块 = 服务商表单中的一条记录
+;
+; ===== example.com =====
+;
+;   类型: A
+;   名称: mail   — 多数面板只需填 mail，少数需要完整的 mail.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: MX
+;   名称: @   — 域名本身 — 填 @（部分面板需要 example.com）
+;   值: mail.example.com
+;   优先级: 10
+;   TTL: 自动（或 3600）
+;
+;   类型: TXT
+;   名称: @   — 域名本身 — 填 @（部分面板需要 example.com）
+;   值: v=spf1 mx -all
+;   TTL: 自动（或 3600）
+;
+;   类型: TXT
+;   名称: _dmarc   — 多数面板只需填 _dmarc，少数需要完整的 _dmarc.example.com
+;   值: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: relay   — 多数面板只需填 relay，少数需要完整的 relay.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: cloud   — 多数面板只需填 cloud，少数需要完整的 cloud.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: git   — 多数面板只需填 git，少数需要完整的 git.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: gitlab   — 多数面板只需填 gitlab，少数需要完整的 gitlab.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: photos   — 多数面板只需填 photos，少数需要完整的 photos.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: vault   — 多数面板只需填 vault，少数需要完整的 vault.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: vpn   — 多数面板只需填 vpn，少数需要完整的 vpn.example.com
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+; 用导入代替手动录入
+; Cloudflare：DNS → Records →「Import and Export」→「Import DNS records」→ 上传 example.com-dns-zone.txt。
+; 导入后请确认每条记录都是「DNS only」（灰色云朵）。
+; 同一个 example.com-dns-zone.txt 也适用于 Route53、Google、Namecheap、GoDaddy、Gandi、Hetzner、deSEC、DNSimple、Porkbun。
+; 需要表格的面板请使用 example.com-dns-records.csv。
+;
+; ===== example.org =====
+;
+;   类型: A
+;   名称: mail   — 多数面板只需填 mail，少数需要完整的 mail.example.org
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: MX
+;   名称: @   — 域名本身 — 填 @（部分面板需要 example.org）
+;   值: mail.example.com
+;   优先级: 10
+;   TTL: 自动（或 3600）
+;
+;   类型: TXT
+;   名称: @   — 域名本身 — 填 @（部分面板需要 example.org）
+;   值: v=spf1 mx -all
+;   TTL: 自动（或 3600）
+;
+;   类型: TXT
+;   名称: _dmarc   — 多数面板只需填 _dmarc，少数需要完整的 _dmarc.example.org
+;   值: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.org
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: cloud   — 多数面板只需填 cloud，少数需要完整的 cloud.example.org
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: git   — 多数面板只需填 git，少数需要完整的 git.example.org
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: gitlab   — 多数面板只需填 gitlab，少数需要完整的 gitlab.example.org
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: photos   — 多数面板只需填 photos，少数需要完整的 photos.example.org
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: vault   — 多数面板只需填 vault，少数需要完整的 vault.example.org
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: vpn   — 多数面板只需填 vpn，少数需要完整的 vpn.example.org
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+; 用导入代替手动录入
+; Cloudflare：DNS → Records →「Import and Export」→「Import DNS records」→ 上传 example.org-dns-zone.txt。
+; 导入后请确认每条记录都是「DNS only」（灰色云朵）。
+; 同一个 example.org-dns-zone.txt 也适用于 Route53、Google、Namecheap、GoDaddy、Gandi、Hetzner、deSEC、DNSimple、Porkbun。
+; 需要表格的面板请使用 example.org-dns-records.csv。
+;
+; ===== example.net =====
+;
+;   类型: A
+;   名称: mail   — 多数面板只需填 mail，少数需要完整的 mail.example.net
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: MX
+;   名称: @   — 域名本身 — 填 @（部分面板需要 example.net）
+;   值: mail.example.com
+;   优先级: 10
+;   TTL: 自动（或 3600）
+;
+;   类型: TXT
+;   名称: @   — 域名本身 — 填 @（部分面板需要 example.net）
+;   值: v=spf1 mx -all
+;   TTL: 自动（或 3600）
+;
+;   类型: TXT
+;   名称: _dmarc   — 多数面板只需填 _dmarc，少数需要完整的 _dmarc.example.net
+;   值: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.net
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: cloud   — 多数面板只需填 cloud，少数需要完整的 cloud.example.net
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: git   — 多数面板只需填 git，少数需要完整的 git.example.net
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: gitlab   — 多数面板只需填 gitlab，少数需要完整的 gitlab.example.net
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: photos   — 多数面板只需填 photos，少数需要完整的 photos.example.net
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: vault   — 多数面板只需填 vault，少数需要完整的 vault.example.net
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+;   类型: A
+;   名称: vpn   — 多数面板只需填 vpn，少数需要完整的 vpn.example.net
+;   值: 203.0.113.10
+;   TTL: 自动（或 3600）
+;
+; 用导入代替手动录入
+; Cloudflare：DNS → Records →「Import and Export」→「Import DNS records」→ 上传 example.net-dns-zone.txt。
+; 导入后请确认每条记录都是「DNS only」（灰色云朵）。
+; 同一个 example.net-dns-zone.txt 也适用于 Route53、Google、Namecheap、GoDaddy、Gandi、Hetzner、deSEC、DNSimple、Porkbun。
+; 需要表格的面板请使用 example.net-dns-records.csv。
+;
+; Cloudflare：请把这里每一条记录的 Proxy status 设为「DNS only」（灰色云朵）。橙色云朵会破坏邮件和 VPN。
+;
+
+
+; 邮件主机指向 VPS 的公网 IP。
+mail.example.com.    IN A    203.0.113.10
+mail.example.org.    IN A    203.0.113.10
+mail.example.net.    IN A    203.0.113.10
+
+; 该域名的邮件由主机 mail.example.com 接收。
+example.com.    IN MX 10    mail.example.com.
+
+; SPF：只有 MX 主机可以发送该域名的邮件。
+example.com.    IN TXT    "v=spf1 mx -all"
+
+; DMARC：未通过 SPF/DKIM 的邮件进入隔离区，报告发送至 postmaster。
+_dmarc.example.com.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com"
+
+; 该域名的邮件由主机 mail.example.com 接收。
+example.org.    IN MX 10    mail.example.com.
+
+; SPF：只有 MX 主机可以发送该域名的邮件。
+example.org.    IN TXT    "v=spf1 mx -all"
+
+; DMARC：未通过 SPF/DKIM 的邮件进入隔离区，报告发送至 postmaster。
+_dmarc.example.org.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.org"
+
+; 该域名的邮件由主机 mail.example.com 接收。
+example.net.    IN MX 10    mail.example.com.
+
+; SPF：只有 MX 主机可以发送该域名的邮件。
+example.net.    IN TXT    "v=spf1 mx -all"
+
+; DMARC：未通过 SPF/DKIM 的邮件进入隔离区，报告发送至 postmaster。
+_dmarc.example.net.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.net"
+
+; PTR 主机名的正向记录（反向 DNS 必须解析回同一 IP）。
+relay.example.com.    IN A    203.0.113.10
+
+; 服务主机名 —— 与 VPS 相同的公网 IP（由 Caddy 代理）。
+cloud.example.com.    IN A    203.0.113.10
+cloud.example.net.    IN A    203.0.113.10
+cloud.example.org.    IN A    203.0.113.10
+git.example.com.    IN A    203.0.113.10
+git.example.net.    IN A    203.0.113.10
+git.example.org.    IN A    203.0.113.10
+gitlab.example.com.    IN A    203.0.113.10
+gitlab.example.net.    IN A    203.0.113.10
+gitlab.example.org.    IN A    203.0.113.10
+photos.example.com.    IN A    203.0.113.10
+photos.example.net.    IN A    203.0.113.10
+photos.example.org.    IN A    203.0.113.10
+vault.example.com.    IN A    203.0.113.10
+vault.example.net.    IN A    203.0.113.10
+vault.example.org.    IN A    203.0.113.10
+vpn.example.com.    IN A    203.0.113.10
+vpn.example.net.    IN A    203.0.113.10
+vpn.example.org.    IN A    203.0.113.10
+
+; DKIM：该值由安装脚本在报告中输出（密钥在服务器上生成）。
+; dkim._domainkey.example.com.    IN TXT    "v=DKIM1; k=rsa; p=<来自安装脚本报告>"
+
+; PTR（反向 DNS）不在此处配置，而是在 VPS 提供商的面板中设置：
+; 203.0.113.10 -> relay.example.com —— 对送达率至关重要。

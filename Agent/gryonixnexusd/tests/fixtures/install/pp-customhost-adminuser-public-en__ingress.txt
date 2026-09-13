@@ -1,0 +1,4 @@
+hostname=photos2.example.com
+upstreamPort=2342
+adminGuard=true
+upstreamHTTPS=false

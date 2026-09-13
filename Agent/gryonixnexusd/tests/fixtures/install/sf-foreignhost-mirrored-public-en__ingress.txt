@@ -1,0 +1,4 @@
+hostname=files.other-company.net
+upstreamPort=8088
+adminGuard=true
+upstreamHTTPS=false

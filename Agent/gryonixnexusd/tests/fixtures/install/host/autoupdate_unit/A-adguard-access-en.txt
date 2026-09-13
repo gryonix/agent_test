@@ -1,0 +1,6 @@
+[Unit]
+Description=gryonixNexus scheduled update run
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/gryonixnexus-update-ctl.sh run --scheduled

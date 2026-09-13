@@ -1,0 +1,4 @@
+hostname=photoprism.other-company.net
+upstreamPort=2342
+adminGuard=true
+upstreamHTTPS=false

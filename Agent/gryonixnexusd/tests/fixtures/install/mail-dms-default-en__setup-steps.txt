@@ -1,0 +1,261 @@
+log "Docker Mailserver: starting"
+install -d -m 755 /opt/docker-mailserver /opt/docker-mailserver/mail-data /opt/docker-mailserver/mail-state /opt/docker-mailserver/mail-logs /opt/docker-mailserver/config /opt/docker-mailserver/webmail /opt/docker-mailserver/webmail-db
+# The certificate directory is root-only: the container reads it
+# read-only, and nothing else on the host has business there.
+install -d -m 700 /opt/docker-mailserver/certs
+# SSL_TYPE=manual does NOT degrade when the files are missing: the
+# engine prints "File … does not exist!", shuts down, and
+# `restart: unless-stopped` turns that into a permanent crash
+# loop. Caddy only obtains the real certificate two steps later,
+# so on a fresh install there is nothing to point at yet — and a
+# container stuck in that loop never gets its first mailbox or its
+# DKIM keys either. A self-signed placeholder lets the engine boot;
+# the sync below replaces it the moment Caddy has the real one.
+# Live-found: without this the whole engine never starts.
+if [ ! -s /opt/docker-mailserver/certs/cert.pem ] || [ ! -s /opt/docker-mailserver/certs/key.pem ]; then
+  if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+       -subj "/CN=mail.example.com" -addext "subjectAltName=DNS:mail.example.com" \
+       -keyout /opt/docker-mailserver/certs/key.pem -out /opt/docker-mailserver/certs/cert.pem >/dev/null 2>&1; then
+    chmod 644 /opt/docker-mailserver/certs/cert.pem
+    chmod 600 /opt/docker-mailserver/certs/key.pem
+  else
+    log "Docker Mailserver: could not create the temporary certificate — the mail container will not start until the real certificate arrives"
+  fi
+fi
+cd /opt/docker-mailserver
+docker compose -p dockermailserver pull -q
+docker compose -p dockermailserver up -d
+cat > /opt/gryonixnexus-dms-cert-sync.sh <<'EOF_DMS_CERTSYNC'
+#!/bin/bash
+set -eu
+DOMAIN="mail.example.com"
+DMS="/opt/docker-mailserver"
+DEST="$DMS/certs"
+CADDY_DATA="/var/lib/caddy/.local/share/caddy/certificates"
+SRC_CRT="$(find "$CADDY_DATA" -type f -name "${DOMAIN}.crt" 2>/dev/null | head -n1)"
+SRC_KEY="$(find "$CADDY_DATA" -type f -name "${DOMAIN}.key" 2>/dev/null | head -n1)"
+# No certificate yet (ACME still pending) is not an error: the timer
+# comes back every hour and the mail ports keep serving what they have.
+if [ -z "$SRC_CRT" ] || [ -z "$SRC_KEY" ]; then exit 0; fi
+if cmp -s "$SRC_CRT" "$DEST/cert.pem" && cmp -s "$SRC_KEY" "$DEST/key.pem"; then exit 0; fi
+cp "$SRC_CRT" "$DEST/cert.pem"
+cp "$SRC_KEY" "$DEST/key.pem"
+chmod 644 "$DEST/cert.pem"
+chmod 600 "$DEST/key.pem"
+cd "$DMS"
+# Postfix and Dovecot read the certificate at start; the container has
+# no reload hook for a file that changed under it.
+docker compose -p dockermailserver restart mailserver >/dev/null 2>&1 || true
+EOF_DMS_CERTSYNC
+chmod 700 /opt/gryonixnexus-dms-cert-sync.sh
+cat > /etc/systemd/system/gryonixnexus-dms-cert-sync.service <<'EOF_DMS_CERTSVC'
+[Unit]
+Description=Sync Caddy TLS certificate into Docker Mailserver (SMTP/IMAPS)
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/gryonixnexus-dms-cert-sync.sh
+EOF_DMS_CERTSVC
+cat > /etc/systemd/system/gryonixnexus-dms-cert-sync.timer <<'EOF_DMS_CERTTIMER'
+[Unit]
+Description=Periodic Caddy to Docker Mailserver TLS certificate sync
+[Timer]
+OnActiveSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF_DMS_CERTTIMER
+systemctl daemon-reload
+systemctl enable --now gryonixnexus-dms-cert-sync.timer >/dev/null 2>&1 || true
+/opt/gryonixnexus-dms-cert-sync.sh || true
+# First mailbox and DKIM keys. Nothing here is fatal and no output
+# is discarded — the same rule the mailcow API, the Nextcloud occ
+# and the Mailu CLI blocks follow: errexit in the middle of this
+# step would take the remaining services and the revocation of the
+# install key with it, and a mailbox is addable afterwards.
+DMS_OUT=""
+dms_exec() { DMS_OUT="$(timeout 120 docker exec mailserver "$@" 2>&1)"; }
+# Passwords go in on stdin, never in argv: the arguments of
+# `docker exec` are readable out of /proc by every account on the
+# box. The helper asks for the password twice, so it is fed twice.
+# $1 add|update, $2 address, $3 password.
+dms_mailbox() {
+  DMS_OUT="$(printf '%s\n%s\n' "$3" "$3" \
+    | timeout 120 docker exec -i mailserver setup email "$1" "$2" 2>&1)"
+}
+dms_why() { printf '%s' "$DMS_OUT" | tr -d '\r\n' | cut -c1-300; }
+# A deadline, not a number of tries: each attempt can burn its own
+# timeout, so counting attempts leaves the real wait unbounded.
+# The probe is `setup help` and NOT `setup email list`: the list
+# subcommand exits 1 while no account exists — which is exactly the
+# state of every fresh install — so it answered "not ready" until
+# the deadline ran out and neither the first mailbox nor the DKIM
+# keys were ever created. Live-found on a real container.
+DMS_READY=0
+DMS_TRY=0
+DMS_DEADLINE=$(($(date +%s) + 300))
+while [ "$(date +%s)" -lt "$DMS_DEADLINE" ]; do
+  if dms_exec setup help; then DMS_READY=1; break; fi
+  DMS_TRY=$((DMS_TRY + 1))
+  # Heartbeat every ~30 s: silence here is indistinguishable from a
+  # hung install in the app's progress view.
+  if [ "$((DMS_TRY % 6))" -eq 0 ]; then
+    log "Docker Mailserver: waiting for the container to finish its own setup ($(dms_why))"
+  fi
+  sleep 5
+done
+if [ "$DMS_READY" -eq 1 ]; then
+  DMS_PASSWORD="$(grep '^FIRST_MAILBOX_PASSWORD=' /opt/docker-mailserver/.env | cut -d= -f2- || true)"
+  # Its failure IS the answer "there are no accounts yet" — the
+  # account file does not exist until the first one is added — so
+  # it must not take the step down with it under errexit.
+  dms_exec setup email list || true
+  # `email list` prints one line per mailbox; matching the address
+  # at a word boundary keeps a lookalike account from passing for
+  # this one and silently skipping creation — the Forgejo lesson.
+  if ! printf '%s' "$DMS_OUT" | grep -qE "(^|[[:space:]*])admin@example.com([[:space:]]|$)"; then
+    if [ -n "$DMS_PASSWORD" ]; then
+      dms_mailbox add "admin@example.com" "$DMS_PASSWORD" \
+        || log "Docker Mailserver: the first mailbox was NOT created. The server is running: add it from the app, or with 'setup email add' on the server. ($(dms_why))"
+    fi
+  fi
+    # Idempotent: the helper skips a domain that already has a key.
+  # The selector is spelled out — the default is `mail`, and the
+  # DNS artifact tells the user to publish `dkim._domainkey`.
+  dms_exec setup config dkim keysize 2048 selector dkim domain example.com \
+    || log "Docker Mailserver: could not create the DKIM key for example.com — add it later from the server ($(dms_why))"
+else
+  log "Docker Mailserver did not finish its setup in time — no mailbox and no DKIM keys were created; check the container logs ($(dms_why))"
+fi
+cat > /opt/gryonixnexus-dms-mailbox.sh <<'EOF_DMS_MAILBOX'
+#!/bin/bash
+# Mailbox management for the gryonixNexus dashboard.
+# Usage: gryonixnexus-dms-mailbox.sh list
+#        gryonixnexus-dms-mailbox.sh add <address> (password on stdin)
+#        gryonixnexus-dms-mailbox.sh del <address>
+#        gryonixnexus-dms-mailbox.sh password <address> (password on stdin)
+set -euo pipefail
+cd /opt/docker-mailserver 2>/dev/null || { echo "docker mailserver is not installed" >&2; exit 2; }
+ACTION="${1:-}"
+ADDRESS="${2:-}"
+# The address is checked HERE, not by the container: this script runs as
+# root through sudo, so an argument that reaches `docker exec` unchecked
+# is an argument that reaches root. One local part, one domain, no
+# shell metacharacters, no leading dash that could read as a flag.
+check_address() {
+  case "$ADDRESS" in
+    -*|*[!a-zA-Z0-9.@_+-]*|*@*@*|@*|*@) echo "invalid address: ${ADDRESS}" >&2; exit 2 ;;
+    *@*) ;;
+    *) echo "invalid address: ${ADDRESS}" >&2; exit 2 ;;
+  esac
+}
+# The password arrives on stdin, never in argv, where /proc would show
+# it to every account on the box.
+read_password() {
+  if [ -t 0 ]; then echo "a password is required on stdin" >&2; exit 2; fi
+  PASSWORD="$(cat)"
+  [ -n "$PASSWORD" ] || { echo "the password is empty" >&2; exit 2; }
+}
+case "$ACTION" in
+  list)
+    # An install with no mailboxes yet is an EMPTY LIST, not a failure:
+    # `setup email list` exits 1 for as long as the account file does
+    # not exist, and the app would show an error where it should show
+    # "no mailboxes". The file is checked on the host — it is the same
+    # directory the container has mounted, so this adds no second
+    # source of truth. A container that is down still makes the listing
+    # fail, which the app does need to see.
+    if [ -s /opt/docker-mailserver/config/postfix-accounts.cf ]; then
+      docker exec mailserver setup email list
+    fi
+    ;;
+  add)
+    check_address; read_password
+    # The password goes down stdin into the container as well, not as
+    # an argument: `docker exec` argv is world-readable in /proc. The
+    # helper prompts for it twice, hence the two lines.
+    printf '%s\n%s\n' "$PASSWORD" "$PASSWORD" \
+      | docker exec -i mailserver setup email add "$ADDRESS" >/dev/null
+    echo "GRYONIXNEXUS_MAILBOX_DONE add ${ADDRESS}"
+    ;;
+  del)
+    check_address
+    # Retried, because deleting a mailbox seconds after creating it
+    # loses a race INSIDE the engine: `addmailuser` writes the account
+    # line at once, but the mail directory is created asynchronously
+    # about a second later, and `delmailuser` refuses while it is not
+    # there ("Mailbox data directory … does not exist"). Live-measured
+    # 2026-08-06: absent at t=0, present at t=1s, and the very same
+    # call then succeeds. Nothing is destroyed by the refusal — the
+    # account line survives — so retrying is safe, and "add a mailbox,
+    # notice the typo, delete it" is the most likely first thing
+    # anyone does with this screen.
+    # The LAST attempt runs with its output visible: whatever is
+    # really wrong, the engine's own words are the only explanation
+    # the app can show, and the marker is not printed on failure.
+    DEL_TRY=1
+    while true; do
+      if [ "$DEL_TRY" -ge 5 ]; then
+        docker exec mailserver setup email del -y "$ADDRESS" >/dev/null
+        break
+      fi
+      if docker exec mailserver setup email del -y "$ADDRESS" >/dev/null 2>&1; then
+        break
+      fi
+      DEL_TRY=$((DEL_TRY + 1))
+      sleep 2
+    done
+    echo "GRYONIXNEXUS_MAILBOX_DONE del ${ADDRESS}"
+    ;;
+  password)
+    check_address; read_password
+    printf '%s\n%s\n' "$PASSWORD" "$PASSWORD" \
+      | docker exec -i mailserver setup email update "$ADDRESS" >/dev/null
+    echo "GRYONIXNEXUS_MAILBOX_DONE password ${ADDRESS}"
+    ;;
+  *)
+    echo "unsupported action: ${ACTION}" >&2; exit 2 ;;
+esac
+EOF_DMS_MAILBOX
+chmod 700 /opt/gryonixnexus-dms-mailbox.sh
+cat > /opt/gryonixnexus-dms-dkim.sh <<'EOF_DMS_DKIM'
+#!/bin/bash
+set -euo pipefail
+# `setup config dkim` is what actually MINTS the key (see the install
+# step that calls it), and it always writes BIND-format keys under
+# opendkim/keys/<domain>/dkim.txt — REGARDLESS of ENABLE_RSPAMD vs
+# ENABLE_OPENDKIM. Rspamd's dkim_signing module reads its signing key
+# from that same path by the image's own default config; "opendkim"
+# here names where the key lives, not which engine signs with it.
+#
+# An earlier version of this wrapper globbed
+# `rspamd/dkim/*-dkim-*.public.dns.txt`, a path rspamd never writes on
+# this image — verified live 2026-08-09 on a fresh install: the real
+# key sat at opendkim/keys/<domain>/dkim.txt the whole time, and the
+# glob matched nothing, so every report said "not ready yet" forever.
+#
+# dkim.txt is a BIND zone-file record, not a bare value:
+#   dkim._domainkey IN TXT ( "v=DKIM1; h=sha256; k=rsa; "
+#     "p=MIIB..." "dYRV...AB" )  ; ----- DKIM key dkim for <domain>
+# The quoted segments concatenate directly (no separator) into the
+# single value to publish — the first segment's own trailing space
+# is what keeps "k=rsa;" and "p=..." apart, so no extra space is added
+# here.
+for F in /opt/docker-mailserver/config/opendkim/keys/*/dkim.txt; do
+  [ -f "$F" ] || continue
+  D="$(basename "$(dirname "$F")")"
+  V="$(grep -o '"[^"]*"' "$F" | tr -d '"\n' | head -c 2000)"
+  [ -n "$V" ] || continue
+  # Bare, no quotes around $V — mailcow and Mailu both print the value
+  # unquoted (see their own dkimMarker lines), and DKIMRecordParser /
+  # DKIMExport downstream both expect the bare "v=DKIM1;...;p=..."
+  # string, adding their own quoting where a format needs it (the BIND
+  # zone export, the DNS provider's own form). A quoted value here
+  # would ship the literal `"` characters into every artifact and
+  # clipboard copy built from it.
+  echo "GRYONIXNEXUS_DKIM dkim._domainkey.$D $V"
+done
+echo "GRYONIXNEXUS_DKIM_DONE"
+EOF_DMS_DKIM
+chmod 700 /opt/gryonixnexus-dms-dkim.sh

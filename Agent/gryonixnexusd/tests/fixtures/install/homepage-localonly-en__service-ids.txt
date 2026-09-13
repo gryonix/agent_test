@@ -1,0 +1,4 @@
+seafile
+photoprism
+jellyfin
+homepage

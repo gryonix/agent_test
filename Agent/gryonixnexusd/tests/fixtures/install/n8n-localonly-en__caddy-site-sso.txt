@@ -1,0 +1,16 @@
+flows.home.local {
+    # gryonixnexus: n8n
+    tls internal
+    @gryonixnexus_open path /webhook/* /webhook-test/*
+    handle @gryonixnexus_open {
+        reverse_proxy 127.0.0.1:8099
+    }
+    handle {
+        import /etc/caddy/gryonixnexus-admin-guard
+        forward_auth 127.0.0.1:8094 {
+            uri /api/authz/forward-auth
+            copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+        }
+        reverse_proxy 127.0.0.1:8099
+    }
+}

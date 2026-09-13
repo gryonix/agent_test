@@ -1,0 +1,137 @@
+{
+ "B-adguard-access-en": [
+  "B-adguard-access-en",
+  "B-adguard-full-access-en",
+  "B-adguard-full-noaccess-en",
+  "B-adguard-noaccess-en",
+  "B-jellyfin-access-en",
+  "B-jellyfin-full-access-en",
+  "B-jellyfin-full-noaccess-en",
+  "B-jellyfin-noaccess-en",
+  "B-nomail-ovpn-access-en",
+  "B-nomail-ovpn-noaccess-en",
+  "B-passbolt-access-en",
+  "B-passbolt-noaccess-en",
+  "B-passwords-shelf-access-en",
+  "B-passwords-shelf-noaccess-en",
+  "B-photoprism-access-en",
+  "B-photoprism-immich-access-en",
+  "B-photoprism-immich-noaccess-en",
+  "B-photoprism-noaccess-en",
+  "B-psono-access-en",
+  "B-psono-noaccess-en",
+  "B-psono-vaultwarden-access-en",
+  "B-psono-vaultwarden-noaccess-en",
+  "B-seafile-access-en",
+  "B-seafile-nextcloud-access-en",
+  "B-seafile-nextcloud-noaccess-en",
+  "B-seafile-noaccess-en"
+ ],
+ "B-adguard-access-ru": [
+  "B-adguard-access-ru",
+  "B-adguard-full-access-ru",
+  "B-adguard-full-noaccess-ru",
+  "B-adguard-noaccess-ru",
+  "B-jellyfin-access-ru",
+  "B-jellyfin-full-access-ru",
+  "B-jellyfin-full-noaccess-ru",
+  "B-jellyfin-noaccess-ru",
+  "B-nomail-ovpn-access-ru",
+  "B-nomail-ovpn-noaccess-ru",
+  "B-passbolt-access-ru",
+  "B-passbolt-noaccess-ru",
+  "B-passwords-shelf-access-ru",
+  "B-passwords-shelf-noaccess-ru",
+  "B-photoprism-access-ru",
+  "B-photoprism-immich-access-ru",
+  "B-photoprism-immich-noaccess-ru",
+  "B-photoprism-noaccess-ru",
+  "B-psono-access-ru",
+  "B-psono-noaccess-ru",
+  "B-psono-vaultwarden-access-ru",
+  "B-psono-vaultwarden-noaccess-ru",
+  "B-seafile-access-ru",
+  "B-seafile-nextcloud-access-ru",
+  "B-seafile-nextcloud-noaccess-ru",
+  "B-seafile-noaccess-ru"
+ ],
+ "B-bare-access-en": [
+  "B-bare-access-en",
+  "B-bare-noaccess-en"
+ ],
+ "B-bare-access-ru": [
+  "B-bare-access-ru",
+  "B-bare-noaccess-ru"
+ ],
+ "B-dms-access-en": [
+  "B-dms-access-en",
+  "B-dms-noaccess-en",
+  "B-mailcow-access-en",
+  "B-mailcow-noaccess-en",
+  "B-mailcow-wg-access-en",
+  "B-mailcow-wg-noaccess-en"
+ ],
+ "B-dms-access-ru": [
+  "B-dms-access-ru",
+  "B-dms-noaccess-ru",
+  "B-mailcow-access-ru",
+  "B-mailcow-noaccess-ru",
+  "B-mailcow-wg-access-ru",
+  "B-mailcow-wg-noaccess-ru"
+ ],
+ "B-dms-full-access-en": [
+  "B-dms-full-access-en",
+  "B-dms-full-noaccess-en",
+  "B-mailcow-awg-access-en",
+  "B-mailcow-awg-noaccess-en"
+ ],
+ "B-dms-full-access-ru": [
+  "B-dms-full-access-ru",
+  "B-dms-full-noaccess-ru",
+  "B-mailcow-awg-access-ru",
+  "B-mailcow-awg-noaccess-ru"
+ ],
+ "B-mailcow-xray-access-en": [
+  "B-mailcow-xray-access-en",
+  "B-mailcow-xray-noaccess-en"
+ ],
+ "B-mailcow-xray-access-ru": [
+  "B-mailcow-xray-access-ru",
+  "B-mailcow-xray-noaccess-ru"
+ ],
+ "B-mailu-access-en": [
+  "B-mailu-access-en",
+  "B-mailu-noaccess-en"
+ ],
+ "B-mailu-access-ru": [
+  "B-mailu-access-ru",
+  "B-mailu-noaccess-ru"
+ ],
+ "B-mailu-full-access-en": [
+  "B-mailu-full-access-en",
+  "B-mailu-full-noaccess-en"
+ ],
+ "B-mailu-full-access-ru": [
+  "B-mailu-full-access-ru",
+  "B-mailu-full-noaccess-ru"
+ ],
+ "B-multidomain": [
+  "B-multidomain"
+ ],
+ "B-nomail-access-en": [
+  "B-nomail-access-en",
+  "B-nomail-noaccess-en"
+ ],
+ "B-nomail-access-ru": [
+  "B-nomail-access-ru",
+  "B-nomail-noaccess-ru"
+ ],
+ "B-nomail-ss-access-en": [
+  "B-nomail-ss-access-en",
+  "B-nomail-ss-noaccess-en"
+ ],
+ "B-nomail-ss-access-ru": [
+  "B-nomail-ss-access-ru",
+  "B-nomail-ss-noaccess-ru"
+ ]
+}

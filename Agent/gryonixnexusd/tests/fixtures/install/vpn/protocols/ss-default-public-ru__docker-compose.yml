@@ -1,0 +1,17 @@
+services:
+  ssserver:
+    image: ghcr.io/shadowsocks/ssserver-rust:v1.24.0
+    container_name: shadowsocks
+    restart: unless-stopped
+    # Explicit binary name: the image's entrypoint does not prepend
+    # `ssserver` for a bare `-c …`, so `exec "$@"` chokes on the
+    # leading option ("exec: illegal option -c"). Run as root (0:0):
+    # config.json is chmod 600 root-owned (setup and the panel both
+    # keep it 600), so a non-root process could not read it.
+    command: ssserver -c /etc/shadowsocks-rust/config.json
+    user: "0:0"
+    volumes:
+      - /opt/shadowsocks/config.json:/etc/shadowsocks-rust/config.json:ro
+    ports:
+      - "8388:8388/tcp"
+      - "8388:8388/udp"

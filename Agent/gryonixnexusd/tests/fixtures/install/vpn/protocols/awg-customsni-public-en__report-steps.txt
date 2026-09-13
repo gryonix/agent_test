@@ -1,0 +1,2 @@
+echo "AmneziaWG: vpn.example.com:51822 (UDP)"
+echo "  Note: AmneziaWG carries general internet traffic, but the admin panels (mail, cloud, photos, vault) do NOT open over it — they are reachable only over plain WireGuard. Add a WireGuard client in the VPN panel and connect with it to manage them."

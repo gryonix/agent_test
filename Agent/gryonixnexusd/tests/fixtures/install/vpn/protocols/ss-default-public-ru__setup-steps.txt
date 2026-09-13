@@ -1,0 +1,30 @@
+log "Shadowsocks: запуск"
+install -d /opt/shadowsocks
+cat > /opt/shadowsocks/gryonixnexus-update.sh <<'EOF_SS_UPDATE'
+#!/bin/bash
+# Managed by gryonixNexus — Shadowsocks (shadowsocks-rust) update for the Server Dashboard.
+set -euo pipefail
+cd /opt/shadowsocks
+docker compose -p shadowsocks pull -q
+docker compose -p shadowsocks up -d
+EOF_SS_UPDATE
+chmod 750 /opt/shadowsocks/gryonixnexus-update.sh
+cd /opt/shadowsocks
+# First run only: generate the pre-shared key on this server (a
+# base64-encoded 32-byte key for the 2022 cipher); re-runs keep it.
+if [ ! -f config.json ]; then
+  SS_PASSWORD="$(openssl rand -base64 32)"
+  cat > config.json <<EOF_SS_CONFIG
+{
+    "server": "0.0.0.0",
+    "server_port": 8388,
+    "password": "${SS_PASSWORD}",
+    "method": "2022-blake3-aes-256-gcm",
+    "mode": "tcp_and_udp",
+    "timeout": 300
+}
+EOF_SS_CONFIG
+fi
+chmod 600 config.json
+docker compose -p shadowsocks pull -q
+docker compose -p shadowsocks up -d

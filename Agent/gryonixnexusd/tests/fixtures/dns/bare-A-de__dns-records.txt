@@ -1,0 +1,24 @@
+; DNS-Einträge für example.com — fügen Sie sie bei Ihrem DNS-Anbieter hinzu.
+; Format: Name  Typ  Wert
+
+; WAS EINZUTRAGEN IST — ein Block unten = ein Eintrag im Formular Ihres Anbieters
+;
+;   Typ: A
+;   Name: relay   — die meisten Panels wollen nur relay — manche das vollständige relay.example.com
+;   Wert: 203.0.113.10
+;   TTL: Auto (oder 3600)
+;
+; Cloudflare: Setzen Sie den Proxy-Status bei JEDEM Eintrag hier auf „DNS only“ (graue Wolke). Die orange Wolke zerstört E-Mail und VPN.
+;
+; IMPORTIEREN STATT TIPPEN
+; Cloudflare: DNS → Records → „Import and Export“ → „Import DNS records“ → example.com-dns-zone.txt hochladen.
+; Danach prüfen, dass jeder importierte Eintrag auf „DNS only“ (graue Wolke) steht.
+; Dieselbe example.com-dns-zone.txt funktioniert bei Route53, Google, Namecheap, GoDaddy, Gandi, Hetzner, deSEC, DNSimple, Porkbun.
+; Panels, die eine Tabelle erwarten: example.com-dns-records.csv verwenden.
+
+
+; Vorwärts-Eintrag für den PTR-Hostnamen (Reverse DNS muss auf dieselbe IP zurückauflösen).
+relay.example.com.    IN A    203.0.113.10
+
+; Der PTR-Eintrag (Reverse DNS) wird NICHT hier konfiguriert, sondern im Panel des Server-Anbieters:
+; 203.0.113.10 -> relay.example.com — entscheidend für die Zustellbarkeit.

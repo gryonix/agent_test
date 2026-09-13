@@ -1,0 +1,4 @@
+hostname=gateway.example.com
+upstreamPort=8098
+adminGuard=true
+upstreamHTTPS=false

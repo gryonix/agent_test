@@ -1,0 +1,4 @@
+hostname=pass.example.com
+upstreamPort=8082
+adminGuard=true
+upstreamHTTPS=false

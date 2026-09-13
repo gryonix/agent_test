@@ -1,0 +1,9 @@
+mail.example.com {
+    # gryonixnexus: mailcow
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy https://127.0.0.1:18443 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+    }
+}

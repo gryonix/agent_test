@@ -1,0 +1,14 @@
+GD_LOCK_BUSY=75
+
+gd_with_lock() {
+  local id="$1"
+  shift
+  install -d -m 700 '/var/lib/gryonixnexus/locks'
+  local fd
+  exec {fd}>"/var/lib/gryonixnexus/locks/$id.lock"
+  if ! flock -n "$fd"; then
+    echo "$id: another backup or update for this service is already running, skipping" >&2
+    return "$GD_LOCK_BUSY"
+  fi
+  "$@"
+}

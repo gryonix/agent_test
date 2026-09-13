@@ -1,0 +1,108 @@
+[Unit]
+Description=gryonixNexus control-plane agent (gryonixnexusd)
+Documentation=https://github.com/skaymer14/onixdom
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gryonixnexusd
+Restart=always
+RestartSec=2
+# The agent manages docker and service data, so it runs as root. The socket is
+# local-only (/run/gryonixnexusd.sock); reachability comes through the SSH tunnel,
+# never a network port.
+User=root
+RuntimeDirectory=gryonixnexusd
+# A SUBDIRECTORY, because /var/lib/gryonixnexus is shared with the setup scripts:
+# install-report.txt lives there and the app reads it without sudo, so the
+# product directory has to stay 0755. StateDirectory=gryonixnexus + mode 0700 took
+# it away — systemd re-applies the mode on every start, so the report became
+# unreadable and the server-generated credentials were lost with it.
+# Nesting is safe by systemd.exec's own contract: parent components are only
+# created (at 0755) if missing, and "the innermost specified directories will
+# have their access mode adjusted to what is specified in StateDirectoryMode=" —
+# an existing parent is never re-chmod'ed, only `agent` is.
+StateDirectory=gryonixnexus/agent
+StateDirectoryMode=0700
+# Light hardening that does NOT get in the way of managing docker/host services.
+NoNewPrivileges=false
+ProtectHome=true
+ProtectSystem=full
+# ProtectSystem=full makes /etc read-only, and SetUpdateSchedule is the first
+# RPC that writes there: it drives /opt/gryonixnexus-update-ctl.sh, whose
+# `set-schedule` writes /etc/gryonixnexus/autoupdate.conf and, when the schedule
+# is not "off", a timer unit under /etc/systemd/system. Both paths are baked
+# into the wrapper at generation time (the same "generated body, not the
+# agent's own opinion" contract every other wrapper follows), so redirecting
+# via an env var the way ProtectHome's HOME/GNUPGHOME fix does is not an
+# option here — the exception has to be carved out of the sandbox itself.
+# Found live 2026-08-08 on lab-home: `install -d -m 755 /etc/gryonixnexus`
+# failed with "chmod failed with error Read-only file system (os error 30)".
+# /etc/caddy joined the list 2026-08-09, found the same way by the Lockdown
+# RPCs' first live run: /opt/gryonixnexus-admin-lockdown.sh writes the guard's
+# host list to /etc/caddy/gryonixnexus-admin-guard (VPNPanelService.adminGuardPath,
+# a fixed path baked into every generated Caddyfile's import) and failed with
+# "Read-only file system" identically to the /etc/gryonixnexus case above.
+# /etc/nftables.d is the fourth. `install/firewall.rs` writes
+# /etc/nftables.d/gryonixnexus-svc-<service>.nft, which `/etc/nftables.conf`
+# includes by glob; under ProtectSystem=full that write returns EROFS.
+#
+# **The leading `-` is not decoration — without it a MISSING path does not
+# degrade, it bricks the agent.** systemd fails the whole mount namespace when
+# an entry here does not exist: "Failed to set up mount namespacing:
+# /etc/nftables.d: No such file or directory", ExecStart never runs, the unit
+# dies 226/NAMESPACE and Restart=always turns it into a start loop. Measured
+# live on lab-vps 2026-08-11, on the first run of 0.0.27 — the version that
+# added the bare /etc/nftables.d. Both lab hosts predate the firewall slice, so
+# neither had the directory, and the agent that had worked a minute earlier
+# would not start at all. A prefixed path is simply ignored when absent.
+#
+# That makes this the sharper half of the lesson the three entries above
+# taught: a path here is a claim that the directory EXISTS, and only
+# /etc/systemd/system is guaranteed (systemd owns it, and this very unit lives
+# in it). The other three are created by something that may not have run —
+# setup for /etc/gryonixnexus and /etc/nftables.d, the Caddy package for
+# /etc/caddy — and on the bare host Ф4 is meant to be able to build alone,
+# none of the three exists yet. So all three are optional and only the
+# guaranteed one is bare.
+#
+# **What `-` does NOT buy: a path absent at START stays unwritable.** The hole
+# is punched once, when the namespace is built, so a directory created later
+# is still read-only to the running agent (its parent /etc is). For
+# /etc/gryonixnexus that is why bootstrap creates it before starting the unit.
+# For /etc/nftables.d it is deliberately NOT created: `install/firewall.rs`
+# already treats an absent directory as "ports not opened, re-run setup",
+# which is honest, whereas an empty directory nothing includes would let the
+# agent write drop-ins that silently open no ports. /etc/caddy has the same
+# shape and no answer yet — an agent-only host has no Caddy at all, which the
+# host half has to solve rather than this list.
+#
+# /etc/wireguard and /etc/sysctl.d are the fifth and sixth, and they arrived by
+# a route the four above did not: not an RPC writing under /etc, but a WRAPPER
+# the agent spawns. A child process inherits the agent's mount namespace, so
+# /opt/gryonixnexus-uninstall.sh — which RemoveService runs — is as sandboxed as
+# the agent itself. Its cleanup globs reach both directories
+# (99-gryonixnexus-forwarding.conf.bak.*, wg0.conf.bak.*), and wg0.conf is not
+# scrap: it is the tunnel's PRIVATE KEY, and a live host was once found holding
+# five stale copies. Silently failing to delete those is the one outcome worth
+# spending two list entries on.
+# /etc/sudoers.d is the seventh, and it comes with the host half: after an
+# install the agent regenerates the dashboard's command whitelist for the
+# control user the host ALREADY has (it never creates accounts or keys —
+# owner's decision 2026-08-12). It is optional for the usual reason and one of
+# its own: `sudo` is not guaranteed to be installed on a bare host, and the
+# directory is the sudo package's, not ours. Absent means no whitelist is
+# written, which is the correct outcome — there is no control user to
+# authorise on a machine without sudo.
+# /etc/crowdsec is the fifth, and it is the first one found by a TEST rather
+# than by a live failure. `install/crowdsec.rs` writes its journald acquisition
+# to /etc/crowdsec/acquis.d/gryonixnexus.yaml, and the package that owns the
+# rest of that directory is installed by the agent itself — which, exactly like
+# Caddy, does NOT make its config directory writable to a namespace that was
+# built minutes earlier. The bootstrap therefore creates it before the unit
+# starts, the same answer /etc/caddy and /etc/nftables.d already have.
+ReadWritePaths=-/etc/gryonixnexus /etc/systemd/system -/etc/caddy -/etc/nftables.d -/etc/wireguard -/etc/sysctl.d -/etc/sudoers.d -/etc/crowdsec
+
+[Install]
+WantedBy=multi-user.target

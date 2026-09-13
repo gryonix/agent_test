@@ -1,0 +1,6 @@
+25/tcp SMTP
+465/tcp SMTPS
+587/tcp Submission
+143/tcp IMAP
+993/tcp IMAPS
+4190/tcp Sieve

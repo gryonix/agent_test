@@ -1,0 +1,2 @@
+echo "This server inside the mesh: b5.ts.b5.grypak.de"
+echo "  Your devices reach this server by this name once they join"

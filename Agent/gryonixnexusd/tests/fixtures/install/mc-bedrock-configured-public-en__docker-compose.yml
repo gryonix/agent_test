@@ -1,0 +1,20 @@
+services:
+  minecraft-bedrock:
+    image: itzg/minecraft-bedrock-server:2026.8.2
+    container_name: minecraft-bedrock
+    restart: unless-stopped
+    # Same reason as the Java server: a clean stop is a command
+    # written to the server's stdin, and without a terminal the
+    # only way out is a kill.
+    stdin_open: true
+    tty: true
+    environment:
+      EULA: "TRUE"
+      SERVER_PORT: "19133"
+      VERSION: "1.21.44"
+    volumes:
+      - /srv/bedrock/data:/data
+    ports:
+      # UDP, and that is the whole protocol — Bedrock is RakNet
+      # over UDP, so a TCP rule here would open nothing at all.
+      - "19133:19133/udp"

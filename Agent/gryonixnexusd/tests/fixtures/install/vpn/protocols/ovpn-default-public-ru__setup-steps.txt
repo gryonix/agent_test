@@ -1,0 +1,127 @@
+log "OpenVPN: запуск"
+install -d /opt/openvpn/data /opt/openvpn/build
+cat > /opt/openvpn/gryonixnexus-update.sh <<'EOF_OVPN_UPDATE'
+#!/bin/bash
+# Managed by gryonixNexus — OpenVPN update for the Server Dashboard.
+# The image is built locally: rebuild against the pinned base, no pull.
+set -euo pipefail
+cd /opt/openvpn
+docker build -t gryonix-openvpn:local build
+docker compose -p openvpn up -d
+EOF_OVPN_UPDATE
+chmod 750 /opt/openvpn/gryonixnexus-update.sh
+cat > /opt/openvpn/build/Dockerfile <<'EOF_OVPN_DOCKERFILE'
+FROM alpine:3.22
+RUN apk add --no-cache openvpn easy-rsa iptables openssl
+ENV OPENVPN=/etc/openvpn \
+    EASYRSA=/usr/share/easy-rsa \
+    EASYRSA_PKI=/etc/openvpn/pki \
+    EASYRSA_ALGO=ec \
+    EASYRSA_CURVE=prime256v1 \
+    EASYRSA_CRL_DAYS=3650 \
+    EASYRSA_BATCH=1
+RUN ln -s /usr/share/easy-rsa/easyrsa /usr/local/bin/easyrsa
+COPY ovpn_getclient ovpn_revokeclient gryonix-ovpn-run /usr/local/bin/
+RUN chmod +x /usr/local/bin/ovpn_getclient /usr/local/bin/ovpn_revokeclient /usr/local/bin/gryonix-ovpn-run
+CMD ["gryonix-ovpn-run"]
+EOF_OVPN_DOCKERFILE
+cat > /opt/openvpn/build/gryonix-ovpn-run <<'EOF_OVPN_RUN'
+#!/bin/sh
+set -eu
+mkdir -p /dev/net
+[ -c /dev/net/tun ] || mknod /dev/net/tun c 10 200
+iptables -t nat -C POSTROUTING -s 10.11.0.0/24 -j MASQUERADE 2>/dev/null || \
+  iptables -t nat -A POSTROUTING -s 10.11.0.0/24 -j MASQUERADE
+exec openvpn --config /etc/openvpn/server.conf
+EOF_OVPN_RUN
+cat > /opt/openvpn/build/ovpn_getclient <<'EOF_OVPN_GETCLIENT'
+#!/bin/sh
+set -eu
+CN="$1"
+PKI=/etc/openvpn/pki
+. /etc/openvpn/gryonix-env
+cat <<PROFILE
+client
+dev tun
+proto udp
+remote $OVPN_HOST $OVPN_PORT
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+remote-cert-tls server
+verb 3
+<ca>
+$(cat "$PKI/ca.crt")
+</ca>
+<cert>
+$(openssl x509 -in "$PKI/issued/$CN.crt")
+</cert>
+<key>
+$(cat "$PKI/private/$CN.key")
+</key>
+<tls-crypt>
+$(cat /etc/openvpn/tc.key)
+</tls-crypt>
+PROFILE
+EOF_OVPN_GETCLIENT
+cat > /opt/openvpn/build/ovpn_revokeclient <<'EOF_OVPN_REVOKE'
+#!/bin/sh
+set -eu
+CN="$1"
+PKI=/etc/openvpn/pki
+easyrsa revoke "$CN"
+easyrsa gen-crl
+cp -f "$PKI/crl.pem" /etc/openvpn/crl.pem
+chmod 644 /etc/openvpn/crl.pem
+if [ "${2:-}" = "remove" ]; then
+  rm -f "$PKI/issued/$CN.crt" "$PKI/private/$CN.key" "$PKI/reqs/$CN.req"
+fi
+EOF_OVPN_REVOKE
+cd /opt/openvpn
+docker build -q -t gryonix-openvpn:local build >/dev/null
+# First run only: build the EC PKI, the tls-crypt key, the server
+# config and the initial client profile; re-runs keep all of it.
+if [ ! -f data/pki/ca.crt ]; then
+  docker run --rm -v /opt/openvpn/data:/etc/openvpn gryonix-openvpn:local sh -c "
+    set -eu
+    easyrsa init-pki
+    easyrsa build-ca nopass
+    easyrsa --san=DNS:vpn.example.com build-server-full vpn.example.com nopass
+    easyrsa build-client-full gryonixnexus nopass
+    easyrsa gen-crl
+    cp -f /etc/openvpn/pki/crl.pem /etc/openvpn/crl.pem
+    chmod 644 /etc/openvpn/crl.pem
+    openvpn --genkey secret /etc/openvpn/tc.key
+  "
+  printf 'OVPN_HOST=%s\nOVPN_PORT=%s\n' 'vpn.example.com' '1194' > data/gryonix-env
+  cat > data/server.conf <<'EOF_OVPN_SERVER'
+# Managed by gryonixNexus — OpenVPN server (container-internal port 1194).
+server 10.11.0.0 255.255.255.0
+topology subnet
+port 1194
+proto udp
+dev tun
+ca /etc/openvpn/pki/ca.crt
+cert /etc/openvpn/pki/issued/vpn.example.com.crt
+key /etc/openvpn/pki/private/vpn.example.com.key
+dh none
+ecdh-curve prime256v1
+tls-crypt /etc/openvpn/tc.key
+crl-verify /etc/openvpn/crl.pem
+keepalive 10 60
+persist-key
+persist-tun
+user nobody
+group nobody
+push "redirect-gateway def1"
+push "dhcp-option DNS 1.1.1.1"
+push "dhcp-option DNS 1.0.0.1"
+explicit-exit-notify 1
+verb 3
+EOF_OVPN_SERVER
+  docker run --rm -v /opt/openvpn/data:/etc/openvpn gryonix-openvpn:local \
+    ovpn_getclient gryonixnexus > /opt/openvpn/gryonixnexus.ovpn
+fi
+chmod 640 /opt/openvpn/gryonixnexus.ovpn
+docker compose -p openvpn up -d

@@ -1,0 +1,2869 @@
+syntax = "proto3";
+
+// Single source of truth for the gryonixnexusd control-plane API. Typed clients for
+// every platform (Swift / Kotlin / C#) are generated from THIS file — the wire
+// contract is never hand-duplicated per client. Served over Connect-RPC on a
+// local Unix socket (/run/gryonixnexusd.sock); the app reaches it through an SSH
+// tunnel, so the socket never has to be exposed to the network.
+//
+// Phase 1 scope (read-only + adoption): everything here is either read-only or
+// pairing. Phase 2 adds management, and it does so as TYPED operations —
+// deliberately never a generic "run this command". A remote-exec RPC would hand
+// the client a root-equivalent primitive (the agent holds the docker socket) and
+// would put the engine back in the app, which is exactly what this pivot moved
+// out. Every management verb is its own message, validated against the agent's
+// own catalog before anything is executed.
+package gryonixnexusd.v1;
+
+// Timestamps are Unix milliseconds (int64) to keep the schema dependency-free —
+// no well-known-types import needed on any client toolchain.
+
+// ─────────────────────────── Services ───────────────────────────
+
+// Read-only view of one deployment plus its live telemetry.
+service Control {
+  // The authoritative snapshot: which services are installed, their status and
+  // versions, and the host summary. Clients are stateless caches of this.
+  rpc GetState(GetStateRequest) returns (State);
+
+  // Live host metrics, one sample per tick, until the client hangs up. Mirrors
+  // the app's HostMetricsSample fields so the same cards render unchanged.
+  rpc HostMetrics(HostMetricsRequest) returns (stream MetricsSample);
+
+  // Streamed container logs (docker logs -f) for one service.
+  rpc Logs(LogsRequest) returns (stream LogLine);
+
+  // Scan an already-configured server and report what is installed, so a device
+  // with no prior state can adopt it. This is the direct fix for "can't add a
+  // server that was set up elsewhere."
+  rpc Discover(DiscoverRequest) returns (DiscoverResult);
+
+  // Live status of ONE service (its containers, health and version) without the
+  // full scan Discover performs. This is the read half of management: after any
+  // action the client renders what the server reports, and never derives status
+  // from "the command exited 0".
+  rpc ServiceStatus(ServiceStatusRequest) returns (ServiceStatusResponse);
+
+  // Phase 2 — start / stop / restart one catalog service. Server-streaming so a
+  // slow stack (mailcow is twenty containers) reports progress instead of
+  // looking hung, and so the last event can carry the freshly re-read status.
+  rpc ControlService(ControlServiceRequest) returns (stream ServiceOperationEvent);
+
+  // Downsampled history the on-host collector daemon keeps as CSV buckets. Read
+  // only, and unary on purpose: a bucket is a bounded file (a few hundred rows
+  // by the collector's own trimming), so there is nothing to stream and every
+  // call belongs under the channel gate like the other short RPCs.
+  //
+  // The BUCKET SET is not negotiable here: the client asks for one of the six
+  // the collector writes, and the agent refuses anything else instead of
+  // touching a path built from client text.
+  rpc MetricsHistory(MetricsHistoryRequest) returns (MetricsHistoryResponse);
+}
+
+// Backups of one catalog service: what exists, what a run would cost, running
+// one, and deleting one.
+//
+// **The agent CALLS the deployment's root-owned wrapper
+// (/opt/gryonixnexus-backup-ctl.sh); it does not reimplement backing up.** That
+// is the "engine in ONE place" rule applied honestly: the wrapper's body is
+// GENERATED from each service's BackupSpec, it is the same body the systemd
+// timer runs, and it carries knowledge that was paid for by live runs (a tar of
+// a live database directory is a corrupt backup, so every database is dumped
+// through its own client from inside its own container, reading the password
+// from the CONTAINER's environment because `docker exec` argv is world-readable
+// through /proc; mailcow runs its own tool, which names and rotates its own
+// archives; containers come back up on every exit path). A Rust copy of that
+// would be a third implementation of the most expensive logic in the project,
+// and the copies would drift silently — the exact failure the single wrapper
+// was introduced to end.
+//
+// What the agent adds is therefore not the engine but the CONTRACT: the client
+// sends a catalog id and a verb instead of composing a privileged command line,
+// the argument vector is built from the agent's own table, the listing comes
+// back as typed rows instead of `ls -lht` text a client has to parse, and the
+// passphrase travels in the request body to the wrapper's STDIN — never argv.
+//
+// A host whose wrapper is missing (adopted, or set up before backups existed)
+// is refused with failed_precondition and told to re-run setup. That is not a
+// gap in this route: the SSH route calls the same missing file.
+service Backup {
+  // What is in this service's backup directory right now. Read-only.
+  rpc ListBackups(ListBackupsRequest) returns (BackupList);
+
+  // What a run would archive and what the backup filesystem has free, both in
+  // bytes. This is the only reason the app can warn BEFORE an hours-long run,
+  // and it is why `du` is not whitelisted: `du` reads any path on the box, the
+  // wrapper answers only for the paths it was generated with.
+  rpc EstimateBackup(EstimateBackupRequest) returns (BackupEstimate);
+
+  // Run one backup. Server-streaming for the same reason ControlService is: a
+  // backup takes minutes to hours, so it has to report progress instead of
+  // looking hung, and the last event carries the freshly re-read listing —
+  // "did an archive actually land" is the only question worth answering after
+  // a run, and it must not be inferred from an exit code.
+  rpc RunBackup(RunBackupRequest) returns (stream BackupEvent);
+
+  // Delete one backup. Unary, and the answer is the re-read LISTING: same rule
+  // as the mailbox verbs — the client renders what the server reports.
+  rpc DeleteBackup(DeleteBackupRequest) returns (BackupList);
+
+  // The unattended schedule for CATALOG SERVICES' own backups — one wrapper
+  // body serves both the timer and this call, same as Update's. Existed only
+  // over SSH until now (`/opt/gryonixnexus-backup-ctl.sh set-schedule`), which
+  // made it unreachable on a host with no dashboard SSH access at all.
+  rpc GetBackupSchedule(GetBackupScheduleRequest) returns (BackupSchedulePolicy);
+
+  // Set the schedule; answer with the policy RE-READ from disk, never the
+  // request echoed back — same reason as SetUpdateSchedule: the wrapper can
+  // filter what it was asked for.
+  rpc SetBackupSchedule(SetBackupScheduleRequest) returns (BackupSchedulePolicy);
+}
+
+// Updates. The agent invents nothing here either: it drives the deployment's
+// own root-owned /opt/gryonixnexus-update-ctl.sh, no shell and no sudo on the
+// path, exactly as Backup drives backup-ctl. That wrapper decides what an
+// update IS — back up, remember the running image id, pull, wait for health,
+// roll back by putting the tag back — and this service only carries its answers.
+//
+// One consequence is worth stating where it cannot be missed: a run calls the
+// BACKUP wrapper first, which reaches gpg, which needs a writable home. The
+// unit is ProtectHome=true, so the agent hands its children a home of its own
+// (the fix backups already needed) — an update that skipped it would fail on
+// every service that encrypts, which is every service holding a secret.
+service Update {
+  // What each service's images resolve to in their registry RIGHT NOW. Unary
+  // even though it is slow — one metadata request per image, and a full host
+  // takes seconds — because it is bounded, changes nothing, and leaves no
+  // partial state for a stream to describe. EstimateBackup is unary for the
+  // same reason.
+  rpc CheckUpdates(CheckUpdatesRequest) returns (UpdateCheckResult);
+
+  // Apply one service's update. Streaming, because the run is a backup plus a
+  // pull plus a health wait — minutes to hours — and because it can end in a
+  // rollback, an outcome the owner has to watch arrive rather than infer from
+  // an exit code that a streamed operation does not really have.
+  //
+  // One refusal cannot be caught before the stream opens: the wrapper alone
+  // knows which services ship their own updater, and asking it would cost a
+  // full check. It answers with its own exit code 2 having touched nothing, so
+  // that case ends as an error trailer with NO completed event — "nothing
+  // happened" is exactly what the absence of a post-action status says.
+  rpc RunUpdate(RunUpdateRequest) returns (stream UpdateEvent);
+
+  // The unattended schedule AND what the last unattended run left behind, in
+  // one answer. They are one question — "is this server updating itself, and
+  // did that work" — and splitting them is how a server that fails every night
+  // reads as healthy: the schedule says "every day" and nothing says the run
+  // never finished.
+  rpc GetUpdatePolicy(GetUpdatePolicyRequest) returns (UpdatePolicy);
+
+  // Set the schedule. The answer is the policy RE-READ from the server, never
+  // the request echoed back: the wrapper strips services that ship their own
+  // updater, so what the client asked for and what the server will actually do
+  // are legitimately different, and only the second is worth drawing.
+  rpc SetUpdateSchedule(SetUpdateScheduleRequest) returns (UpdatePolicy);
+}
+
+// Removing ONE service, through the deployment's own uninstall wrapper.
+//
+// There is deliberately NO rpc for that wrapper's `--all`. The full erase stops
+// this agent, deletes its binary, its socket and its state directory — so the
+// stream that would report the erase is killed BY the erase, and a client
+// cannot tell "the server was wiped as asked" from "the agent died halfway
+// through". The SSH route does not have that problem, because ssh outlives its
+// own subject; erase stays there, and this is not an oversight to close later.
+// The admin-guard toggle: whether admin web panels (Nextcloud, the VPN panel,
+// Roundcube, …) are reachable from the public internet or only from inside the
+// VPN. Deployment-scoped, not per-service, the same as Update — the wrapper
+// answers for the whole server's Caddy site in one call, so there is nothing
+// here to key by service the way Backup/Uninstall are.
+//
+// **The agent CALLS the deployment's own guard wrapper
+// (/opt/gryonixnexus-admin-lockdown.sh); it does not touch nftables or Caddy
+// itself.** That script already IS the engine (it flips the guard's host
+// matcher and reloads Caddy), and it is the same script the SSH route already
+// drives — a second implementation here would be a second opinion about what
+// "guarded" means for the same server, which is exactly the drift every other
+// wrapper-calling service in this schema was written to avoid.
+//
+// Both RPCs are unary. status/on/off/only are all fast, local operations (an
+// nftables/Caddy reload, not a container engine call), so there is no partial
+// state worth streaming — the same reasoning GetUpdatePolicy/SetUpdateSchedule
+// give for staying unary while RunUpdate streams.
+service Lockdown {
+  // The current guard state, as the wrapper's own last output line encodes it.
+  rpc GetLockdown(GetLockdownRequest) returns (LockdownState);
+
+  // Change the guard state. The answer is the state the WRAPPER reports
+  // afterwards, never the request echoed back — the same "render what the
+  // server reports" rule every mutating RPC in this schema follows, and it
+  // matters here specifically because an ONLY request whose every host fails
+  // the wrapper's own charset check comes back as OFF, not as an error: the
+  // wrapper's validation is authoritative, and echoing the request would show
+  // the owner a guard that is not the one actually in effect.
+  rpc SetLockdown(SetLockdownRequest) returns (LockdownState);
+}
+
+// The host's own intrusion defence — CrowdSec and its nftables bouncer.
+//
+// **Read-only, and deployment-scoped like Lockdown.** CrowdSec is installed and
+// kept current by `ProvisionHost` beside the firewall and the admin guard — it
+// is not a catalog service, it has no site, no domain and no admin, it reads
+// the machine's own journals and writes packet-filter rules in a table of its
+// own. There is nothing here to turn on or off from the app: a host the agent
+// provisions has it. This RPC exists so the app can SHOW the owner that it is
+// working and what it has caught, which for a defence nobody watches is most of
+// its value (measured on a live host: 10 097 failed root password attempts over
+// three days, and nothing said so).
+//
+// One unary call: every number comes from a fast local `cscli` invocation, and
+// a host without CrowdSec answers `present = false` rather than an error.
+service Security {
+  rpc GetSecurityStatus(GetSecurityStatusRequest) returns (SecurityStatus);
+
+  // Whether this host still accepts SSH passwords, and whether the app's own
+  // key is on the account it signs in with.
+  //
+  // **The two facts belong to one answer because the button needs both.**
+  // Closing password login on a host where the app has no key is how a server
+  // is lost, so the app must not offer the switch until it knows the way back
+  // in exists — and it cannot see `authorized_keys` from the client side (the
+  // account it signs in as may not even be the one it asks about). Both are
+  // read outside the agent's own mount namespace; see `install::ssh_password`
+  // for why neither can be answered in-process.
+  rpc GetSshPasswordState(GetSshPasswordStateRequest) returns (SshPasswordState);
+
+  // Close SSH password login, or take it back off. The answer is the state as
+  // RE-READ from the host afterwards, never the request echoed back — the same
+  // rule `SetLockdown` follows, and it matters more here: closing is refused
+  // outright when the app's key is not proven present, so a request to close
+  // can honestly come back open.
+  rpc SetSshPasswordLogin(SetSshPasswordLoginRequest) returns (SshPasswordState);
+
+  // Run the host's intrusion defence the way every other service on the box can
+  // be run: start it, stop it, restart it, bring it up to date, put it back, or
+  // take it off.
+  //
+  // **A verb of its own rather than `ControlService`, because CrowdSec is not a
+  // catalog service.** `ControlService` is keyed by catalog id and speaks to
+  // compose projects; this is two systemd units and two apt packages on the
+  // host, with no site, no domain and no container. Keying it into the catalog
+  // to reuse a stream would be a lie the rest of the schema then has to carry.
+  //
+  // **Why it exists at all** (owner, 2026-09-12: "пользователь полностью
+  // контролирует сервер"): the host protection this fleet installs by default
+  // was the one thing on a provisioned machine the app could look at and not
+  // touch. A defence that cannot be restarted after a bad upgrade, or removed
+  // by the person who owns the machine, is somebody else's software running on
+  // their server.
+  //
+  // Streams like every other operation here: STARTED, then the command output
+  // line by line, then COMPLETED carrying the status as RE-READ from the host —
+  // never the request echoed back, so a stop the host refused comes back
+  // running.
+  rpc ControlSecurity(ControlSecurityRequest) returns (stream SecurityOperationEvent);
+
+  // Who the defence is blocking right now, and who it will never block.
+  //
+  // **The ban that matters most is the one on the person holding the phone**
+  // (owner, 2026-09-12, after eleven failed key attempts from this workstation
+  // put its own address in `crowdsecurity/ssh-slow-bf` and cut the fleet off
+  // for four hours). A defence tuned against password guessers cannot tell a
+  // guesser from an owner whose client offered the wrong key, and when it
+  // decides wrong it drops ALL traffic from that address — SSH and this agent
+  // with it. So the app needs three things: to SEE the list, to take an entry
+  // off it, and — the only one of the three that works from the banned side of
+  // the wall, because it is set BEFORE the ban — to put an address beyond
+  // banning.
+  rpc GetSecurityDecisions(GetSecurityDecisionsRequest) returns (SecurityDecisions);
+
+  // Ban an address by hand, or lift a ban. Answers with the list as RE-READ
+  // from the host, the same rule every mutating verb here follows.
+  rpc SetSecurityDecision(SetSecurityDecisionRequest) returns (SecurityDecisions);
+
+  // The addresses this host will not ban whatever they do, and the switch for
+  // one of them. One allowlist per host, owned by this product and named after
+  // it, created on first use — CrowdSec's own `cscli allowlists` (v1.6 and
+  // newer; older hosts answer `supported = false` and the app says so rather
+  // than editing parser files behind the owner's back).
+  rpc GetSecurityAllowlist(GetSecurityAllowlistRequest) returns (SecurityAllowlist);
+  rpc SetSecurityAllowlist(SetSecurityAllowlistRequest) returns (SecurityAllowlist);
+}
+
+message GetSecurityDecisionsRequest {
+  // How many of the host's OWN decisions to return, newest first. 0 — the
+  // agent's own cap (200), which is well past what a list on a phone shows and
+  // far short of the community blocklist.
+  uint32 limit = 1;
+}
+
+// One address the host is blocking.
+//
+// Passed through as CrowdSec words it rather than re-modelled: `scope` is
+// "Ip"/"Range"/"Country", `action` is nearly always "ban" but CrowdSec has
+// others (captcha, throttle) and an agent that dropped them would be lying
+// about what the host is doing.
+message SecurityDecision {
+  // CrowdSec's own decision id, and what `SetSecurityDecision` deletes by when
+  // it has one — deleting by VALUE removes every decision on that address,
+  // which is right for "unban me" and wrong for "lift this one".
+  string id = 1;
+  string scope = 2;
+  string value = 3;
+  string action = 4;
+  string reason = 5;
+  string country = 6;
+  // The autonomous system the address belongs to, as CrowdSec enriched it
+  // ("58243 TELE AG"). Empty when its GeoIP data is not installed.
+  string as_name = 7;
+  // "crowdsec" for what this host decided itself, "cscli" for what a person
+  // added by hand, "CAPI"/a list name for the community blocklist.
+  string source = 8;
+  // How long is left, as CrowdSec prints it ("3h6m42s"). Empty for a decision
+  // that does not expire.
+  string expires_in = 9;
+  // How many events the scenario counted before it fired. 0 when unknown.
+  uint32 events = 10;
+}
+
+message SecurityDecisions {
+  bool present = 1;
+  // The host's OWN decisions — what it saw and decided, plus anything added by
+  // hand. Newest first.
+  repeated SecurityDecision decisions = 2;
+  // How many addresses the COMMUNITY blocklist is blocking. A count and not a
+  // list on purpose: it runs to tens of thousands of entries this host did not
+  // decide and cannot lift, and a phone that downloaded them all would have
+  // spent a minute to draw a number.
+  uint32 community_count = 3;
+  // The addresses with an SSH session open on this host right now, the app's
+  // own among them — which is the only way the agent can tell the app what it
+  // looks like from outside. The app is reached through an SSH tunnel to a
+  // unix socket, so the agent's own peer address is always the loopback, and a
+  // client behind NAT cannot know its public address either.
+  //
+  // Several sessions mean several addresses and the app must not guess which
+  // is which: it offers them and the person picks.
+  repeated string ssh_client_ips = 4;
+}
+
+message SetSecurityDecisionRequest {
+  // The address or range the decision is about. Required for a ban; for
+  // lifting, either this (every decision on the address goes) or `id` (only
+  // that one).
+  string value = 1;
+  string id = 2;
+  // true — ban it. false — lift it.
+  bool banned = 3;
+  // How long a new ban lasts. 0 — CrowdSec's own default (4 hours). Ignored
+  // when lifting.
+  uint64 duration_seconds = 4;
+  // What to write in the decision's reason. Empty — the agent says the app
+  // asked for it, because a ban with no reason is one nobody can audit later.
+  string reason = 5;
+}
+
+message GetSecurityAllowlistRequest {}
+
+message SecurityAllowlistEntry {
+  // An address or a CIDR range.
+  string value = 1;
+  string comment = 2;
+  // As CrowdSec prints it; empty when the entry does not expire.
+  string expires_in = 3;
+}
+
+message SecurityAllowlist {
+  bool present = 1;
+  // Whether this host's CrowdSec has `cscli allowlists` at all. False on
+  // versions before it existed — the app then says the host is too old
+  // instead of offering a switch that would do nothing.
+  bool supported = 2;
+  // The list this product owns. Other allowlists on the host are left alone
+  // and not reported: they are somebody else's policy.
+  string name = 3;
+  repeated SecurityAllowlistEntry entries = 4;
+  // Same as `SecurityDecisions.ssh_client_ips`, and here for the same reason:
+  // this is the screen where the owner puts their own address beyond banning,
+  // and it is the one thing they cannot type from memory.
+  repeated string ssh_client_ips = 5;
+}
+
+message SetSecurityAllowlistRequest {
+  // The address or range to protect, or to stop protecting.
+  string value = 1;
+  // true — add it. false — take it off.
+  bool allowed = 2;
+  string comment = 3;
+  // 0 — forever, which is what an owner's own office address usually wants.
+  uint64 duration_seconds = 4;
+}
+
+// What `ControlSecurity` may be asked to do.
+//
+// `REMOVE` purges rather than merely stopping: a half-removed CrowdSec is the
+// state that breaks every later `apt-get install` on the host (see
+// `install::crowdsec`'s own header for the measured chain), so "remove" has to
+// mean the packages are gone and their configuration with them. The BANS go
+// with it, and the app has to say so before it asks.
+enum SecurityAction {
+  SECURITY_ACTION_UNSPECIFIED = 0;
+  SECURITY_ACTION_START = 1;
+  SECURITY_ACTION_STOP = 2;
+  SECURITY_ACTION_RESTART = 3;
+  // `apt-get install --only-upgrade` for both packages plus `cscli hub update`
+  // — the scenarios are half of what this software IS, and a host whose hub is
+  // a year old is watching for last year's attacks.
+  SECURITY_ACTION_UPDATE = 4;
+  // Put it on a host that has none — the same steps `ProvisionHost` runs, so a
+  // machine that refused the install once can be asked again without
+  // re-provisioning the whole host.
+  SECURITY_ACTION_INSTALL = 5;
+  SECURITY_ACTION_REMOVE = 6;
+}
+
+message ControlSecurityRequest {
+  SecurityAction action = 1;
+}
+
+// The same flat shape `ServiceOperationEvent` has, and for the same reason:
+// one message per client decoder, and a JSON debug codec that stays readable.
+message SecurityOperationEvent {
+  ServiceOperationPhase phase = 1;
+  SecurityAction action = 2;
+  // PROGRESS only: one output line and which pipe it came from
+  // ("stdout" | "stderr" | "agent").
+  string text = 3;
+  string stream = 4;
+  // COMPLETED only: the host's intrusion defence as re-read after the action.
+  SecurityStatus status = 5;
+  // The name of the run on the HOST, so the phone does not have to stay —
+  // the same id `WatchJob` takes. Empty when this agent build keeps no journal
+  // for the operation.
+  string job_id = 6;
+}
+
+// Dynamic DNS: the host keeps its own A records pointing at the address it
+// actually has.
+//
+// **The token lives on the SERVER, which is the whole point.** An updater that
+// only runs while a phone is unlocked is not dynamic DNS. It is written to a
+// 0600 file and is expected to be scoped to one zone — the agent cannot check
+// that, and says so rather than pretending.
+service Dns {
+  // Turn it on, change it, or (with no names) turn it off. Answers with the
+  // state as re-read from the host, like every other mutating verb here.
+  rpc SetDynamicDNS(SetDynamicDNSRequest) returns (DynamicDNSState);
+  rpc GetDynamicDNS(GetDynamicDNSRequest) returns (DynamicDNSState);
+}
+
+message SetDynamicDNSRequest {
+  // The zone the names live in.
+  string zone = 1;
+  // The names to keep pointing here. EMPTY turns the updater off and removes
+  // its timer — the same shape the mesh's name publishing uses.
+  repeated string names = 2;
+  // A Cloudflare token with DNS edit on that zone. Sent only when it changes;
+  // empty keeps whatever the host already has, so turning a name on and off
+  // does not require handing the credential over again.
+  string token = 3;
+}
+
+message GetDynamicDNSRequest {}
+
+message DynamicDNSState {
+  bool enabled = 1;
+  string zone = 2;
+  repeated string names = 3;
+  // Whether the host holds a token at all — never the token itself.
+  bool has_token = 4;
+  // The last lines the updater recorded, newest last. This is the only channel
+  // a scheduled run has.
+  repeated string recent = 5;
+}
+
+service Uninstall {
+  rpc RemoveService(RemoveServiceRequest) returns (stream UninstallEvent);
+}
+
+// Restoring one service from one of its own backups, through the deployment's
+// restore wrapper (/opt/gryonixnexus-restore.sh).
+//
+// Unlike Backup, there is no routing exception here for the service's backup
+// FLAVOUR: all fifteen catalog services that declare a RestoreSpec — including
+// vaultwarden, whose backup stays off the agent route entirely because it has
+// no wrapper call to make — were unified onto this ONE script from the start,
+// with a hardcoded `restore_vaultwarden` arm sitting beside mailcow's
+// `restore_mailcow` and the generated `restore_<service>` arms every
+// archive-backed service gets. So every service with a RestoreSpec is eligible
+// here, and the wrapper decides what restoring it means, exactly as it already
+// does over SSH.
+//
+// The read half of this is already Backup.ListBackups: a backup and the
+// archive it restores from live in the same directory, so this service adds
+// only the one destructive verb.
+service Restore {
+  rpc RunRestore(RunRestoreRequest) returns (stream RestoreEvent);
+}
+
+// Installing a service from nothing: the agent creates its directories,
+// compose file, secrets and Caddy site, then runs docker itself — natively,
+// no shell, no generated bash script for an SSH session to run. This is Ф4's
+// IMPERATIVE half: срез 4.0/4.1 ported the DECLARATIVE half (what content a
+// service's compose file / env template / Caddy site should hold —
+// dns_records.rs and install/{context,caddy,adguard}.rs) with no RPC and no
+// route at all; this service is what finally CALLS it.
+//
+// Streaming, same shape as ControlService / Backup.RunBackup / Update.RunUpdate:
+// an install takes minutes (a pull, a container start, a readiness wait
+// against the service's own API) and has to report progress instead of
+// looking hung. The two-channel error rule is the same as every other
+// destructive streamed verb in this schema: a refusal BEFORE anything is
+// touched (unknown id, this agent build has no installer for it yet, the
+// container engine itself is unreachable) is a plain error response and the
+// stream never opens; a failure MIDWAY ends in an error trailer, but only
+// AFTER a COMPLETED event carrying the freshly re-read service state.
+//
+// **Idempotent by construction, not by an "already installed" refusal.**
+// Re-running is not blocked — the executor's own steps decide what is
+// already done (an existing `.env` keeps its secrets, an existing
+// `AdGuardHome.yaml` means the initial configuration already ran), the same
+// way `RunBackup`/`RunUpdate` are safe to call again rather than being gated
+// on a stored "did this already happen" flag.
+//
+// **No generic exec, ever — same rule as every other service here.** `docker`
+// is run directly, one argv element per argument; there is no shell on this
+// path, and there never will be.
+//
+// This first slice implements exactly one service (AdGuard Home — the
+// simplest thing in the catalog, ROADMAP.md's own reason for picking it
+// first for Ф4 generally). `InstallService` on any OTHER real catalog id
+// answers `failed_precondition`, not `not_found`: the id is real, this
+// build's executor for it does not exist yet — a distinction the client
+// needs to decide whether retrying against a newer agent build could help.
+service Install {
+  rpc InstallService(InstallServiceRequest) returns (stream InstallServiceEvent);
+  // Attach to a run that is ALREADY going, or read back one that has ended.
+  //
+  // `InstallService` starts the work and hands back its job_id; this is how a
+  // client that closed — the phone put away mid-install, the app killed —
+  // finds out how it went. Both cases are one verb on purpose: a job that is
+  // still running streams its journal and then keeps following it live, and a
+  // job that finished streams the journal and ends. The client cannot tell,
+  // and must not have to: "is it still going" is a race it would always be on
+  // the losing side of.
+  rpc WatchInstall(WatchInstallRequest) returns (stream InstallServiceEvent);
+  // Unary, unlike its neighbour: this writes a fixed set of files and runs
+  // one systemctl restart — there is no long-running work to report progress
+  // about, and no partial state a status re-read would explain.
+  rpc ProvisionHost(ProvisionHostRequest) returns (ProvisionHostResponse);
+}
+
+// ─────────────────────────────── Jobs ───────────────────────────────
+//
+// **Every long operation is a JOB ON THE HOST, and the stream is only how you
+// watch it** (owner, 2026-08-29: "пользователь должен иметь возможность
+// закрыть приложение, чтобы процедура продолжилась").
+//
+// This is the install slice's own lesson, applied to everything else that
+// takes minutes. The work was never owned by the stream: `RunUpdate`,
+// `RunBackup`, `RunRestore`, `RemoveService` and the four container verbs all
+// spawn their run into the daemon and narrate through a channel whose send is
+// allowed to fail — a phone that hangs up has never stopped any of them. What
+// they lacked was a NAME and a RECORD, so a client that closed could not ask
+// how it went; it could only guess from state afterwards.
+//
+// `Jobs` is that missing half, once, for every kind. Each run gets a job id
+// (carried on every event of its own typed stream) and an append-only journal
+// beside the install ones; `WatchJob` replays that journal and then follows it
+// live, and `ListJobs` answers the client that has no id at all — a
+// reinstalled app, a second phone, a deployment imported from a file.
+//
+// **One verb for "still going" and "already ended", deliberately.** A client
+// cannot know which it is before it asks, and making it choose would put it on
+// the losing side of a race every time: a job that is still running streams
+// what has happened and keeps following, a finished one streams it and ends.
+//
+// **What a journal holds is the NARRATION, not the typed payload.** The
+// completion messages of these verbs (`ServiceStatusResponse`, `BackupList`,
+// `ContainerGroup`) are re-reads of live state, and freezing one into a file
+// would hand a returning client a status that was true minutes ago. A watcher
+// re-reads state itself — the same rule the install journal already keeps by
+// not storing its `Service` snapshot.
+service Jobs {
+  // Attach to a run that is already going, or read back one that has ended.
+  // `from_sequence` is the first event still wanted, so a client that kept
+  // nothing passes 0 and gets the run from its first line.
+  rpc WatchJob(WatchJobRequest) returns (stream JobEvent);
+  // What this host has run lately, newest first. Unary: a listing does not
+  // change while it is read.
+  rpc ListJobs(ListJobsRequest) returns (JobList);
+  // Stop a run that is still going, and clean up what it left half done.
+  //
+  // **Not every job can be, and the ones that cannot say so.** A cancel is
+  // only honest where stopping leaves the host in a state somebody can name:
+  // a model fetch writes into a scratch file and nothing else on the machine
+  // depends on it half-finished, so dropping the connection and deleting the
+  // partial blob puts the disk back where it was. An install, an update or a
+  // restore is a sequence of steps on a live host, and "stopped in the
+  // middle" is not a state any of them can promise to leave behind — those
+  // answer FAILED_PRECONDITION rather than pretending.
+  //
+  // Answers the job as it now stands, so a client that raced the run finishing
+  // sees the outcome it actually reached instead of an error.
+  rpc CancelJob(CancelJobRequest) returns (Job);
+}
+
+
+// Mailboxes of the docker-mailserver engine — the one service in the catalog
+// with no web admin of its own, which is why the app IS its admin surface.
+//
+// Four typed verbs, all UNARY, and that is a deliberate difference from
+// ControlService's stream. A power action on a twenty-container stack takes
+// minutes and can end half done, so it needs progress and a status re-read
+// after the fact. A mailbox verb is one bounded engine call with no partial
+// state: the account is created or it is not, the password is changed or it is
+// not, and a refused delete destroys nothing (upstream keeps the account line).
+// So the answer to every mutation is the freshly re-read LISTING — the same
+// "render what the server reports, never what the exit code implies" rule, just
+// without a stream to carry it.
+service Mail {
+  rpc ListMailboxes(ListMailboxesRequest) returns (MailboxList);
+  rpc CreateMailbox(CreateMailboxRequest) returns (MailboxList);
+  rpc DeleteMailbox(DeleteMailboxRequest) returns (MailboxList);
+  rpc SetMailboxPassword(SetMailboxPasswordRequest) returns (MailboxList);
+}
+
+// DKIM records for the mail engine installed on this host (mailcow, Mailu, or
+// docker-mailserver — the catalog's exclusive mail category guarantees at most
+// one is ever present). Read-only and unary, the same reasoning as
+// MetricsHistory: a DKIM key does not change while this call runs, so there is
+// nothing to stream and the call belongs under the channel gate with the other
+// short reads.
+//
+// **The agent CALLS the deployment's own DKIM-dump wrapper — one of
+// /opt/gryonixnexus-dkim.sh (mailcow), /opt/gryonixnexus-dms-dkim.sh
+// (docker-mailserver) or /opt/gryonixnexus-mailu-dkim.sh (Mailu) — it does not
+// rescrape the engine itself.** Each wrapper already carries knowledge paid
+// for by a live run (mailcow's local API calls, docker-mailserver's rspamd
+// file glob and its non-default "dkim" selector, Mailu's `flask mailu
+// config-export` plus a JSON parse); reimplementing any of that here would be
+// a second copy of logic the Backup service note already argues against, and
+// the two copies would drift exactly the way that note describes.
+service Dkim {
+  rpc GetDkimRecords(GetDkimRecordsRequest) returns (DkimRecordList);
+}
+
+// Every container on the host, not only the ones this app installed.
+//
+// Discover answers "which CATALOG services are here" and drops everything else
+// into `notes`; this service answers "what is running on this machine at all".
+// The two are deliberately separate reads: adoption wants the catalog view,
+// and a section that manages a stranger's stack must not be able to change what
+// adoption concludes.
+//
+// The gate is unchanged in kind. A request names a group by the KEY the host
+// itself reported (a compose project name from `docker compose ls`, or a
+// container name from `docker ps`); the agent looks that key up in the
+// inventory it just read and works with ITS string. Client text selects among
+// what the host reports and never becomes an argument — the same rule that
+// keeps `discover::known_service` between a catalog id and the command line,
+// and the reason there is still no generic exec here.
+service Containers {
+  rpc ListContainers(ListContainersRequest) returns (ContainerInventory);
+  // Rename one group. The owner's name is stored ON THE SERVER so a second
+  // paired device sees the same list; the derived name always travels with it
+  // so the UI can offer the way back.
+  rpc SetContainerGroupName(SetContainerGroupNameRequest) returns (ContainerInventory);
+  // Start / stop / restart one group. Reuses ServiceAction rather than
+  // declaring a parallel enum: the three verbs are the same three, and two
+  // enums that mean one thing are two enums that drift.
+  rpc ControlContainerGroup(ControlContainerGroupRequest) returns (stream ContainerOperationEvent);
+  // Follow one group's containers. A separate verb from Control/Logs because
+  // the two RESOLVE differently — a catalog id there, a host-reported key here
+  // — but they share one tail implementation underneath, so the multiplexing,
+  // the kill-on-drop reaping and the line tagging cannot diverge.
+  rpc ContainerGroupLogs(ContainerGroupLogsRequest) returns (stream LogLine);
+  // Everything about one container that the list does not carry: mounts,
+  // restart policy, command, environment.
+  rpc InspectContainer(InspectContainerRequest) returns (ContainerDetail);
+  // What a backup of this group would take, as the agent works it out from the
+  // images and mounts, merged with whatever the owner corrected.
+  rpc GetContainerBackupPlan(GetContainerBackupPlanRequest) returns (ContainerBackupPlan);
+  // Correct it. An empty plan CLEARS the correction and returns the group to
+  // pure detection — the same one-verb shape as renaming, and for the same
+  // reason.
+  rpc SetContainerBackupPlan(SetContainerBackupPlanRequest) returns (ContainerBackupPlan);
+  // Run the plan. The archive lands beside the catalog's own, under the
+  // group's key, so one backups screen answers for the whole host.
+  rpc RunContainerGroupBackup(RunContainerGroupBackupRequest) returns (stream ContainerBackupEvent);
+  // What removing this group would delete, BEFORE anything is removed. A
+  // stranger's stack is one whose contents the owner has not seen, so the
+  // paths are named on the screen that asks for confirmation rather than
+  // summarised as "its data".
+  rpc PreviewContainerGroupRemoval(PreviewContainerGroupRemovalRequest) returns (ContainerRemovalPreview);
+  // Remove it. Never through the uninstall wrapper: that wrapper is a function
+  // of the CATALOG set and answers "unsupported target" for anything else, so
+  // the agent does this itself. Data and backups are independent toggles, and
+  // both default to KEEPING — the same shape the catalog's own removal has.
+  rpc RemoveContainerGroup(RemoveContainerGroupRequest) returns (stream ContainerRemovalEvent);
+  // Pull newer images and recreate. Same chain as the catalog's update wrapper
+  // and in the same order: back up, remember the image ids, pull, recreate,
+  // health-check, roll back. The order is not rearrangeable — see the verb's
+  // own doc in `container_update.rs`.
+  rpc UpdateContainerGroup(UpdateContainerGroupRequest) returns (stream ContainerUpdateEvent);
+  // Whether this group is on the agent's own backup timer, and on what
+  // schedule. Kept apart from the catalog's `backup-ctl` wrapper deliberately:
+  // that wrapper is a function of the installed catalog set, and teaching it a
+  // second, differently-shaped list is how two implementations of one job
+  // start to drift.
+  rpc GetContainerBackupSchedule(GetContainerBackupScheduleRequest) returns (ContainerBackupSchedule);
+  rpc SetContainerBackupSchedule(SetContainerBackupScheduleRequest) returns (ContainerBackupSchedule);
+
+  // What a foreign group's backups ARE, which nothing could ask before.
+  //
+  // The archives have existed since container backups landed — the agent writes
+  // them under its own root, on a schedule if the owner set one — and no verb
+  // returned them, so the app ran backups it could never show. `ListBackups`
+  // next door cannot answer for these: it resolves a CATALOG id through the
+  // wrapper the installer generated, and a stranger's stack has neither.
+  //
+  // Read-only, deliberately. Restoring a foreign stack means untarring volumes
+  // back over a running engine and replaying dumps, which is a destructive verb
+  // that has to be proven on a real host before it exists — and a listing that
+  // exists first is what makes that provable at all.
+  rpc ListContainerGroupBackups(ListContainerGroupBackupsRequest) returns (ContainerBackupList);
+}
+
+// Multi-device control of one server: pair a new pult, list them, revoke, and
+// say how long a device stays signed in before it has to prove itself again.
+service Pairing {
+  rpc Pair(PairRequest) returns (PairResponse);
+  rpc ListDevices(ListDevicesRequest) returns (DeviceList);
+  rpc Revoke(RevokeRequest) returns (RevokeResponse);
+  // The deployment-wide auto-logout window. Read and written from the paired
+  // devices screen; see SessionPolicy for what it can and cannot enforce.
+  rpc GetSessionPolicy(GetSessionPolicyRequest) returns (SessionPolicy);
+  rpc SetSessionPolicy(SetSessionPolicyRequest) returns (SessionPolicy);
+}
+
+// **The passwords of this deployment's own services, kept BY THE SERVER.**
+//
+// Until this existed every credential lived in the Keychain of whichever phone
+// installed the server: a second device saw nothing, and a password changed on
+// one was still the old one on the other. The same reasoning that put container
+// group NAMES on the server (they are about a server, not about a phone) puts
+// these here — with one difference that matters, which is that these are
+// secrets, so they are encrypted at rest by the agent and never written to the
+// journal.
+//
+// **What this is NOT.** It is not a password manager for the person's own
+// logins — that is Vaultwarden, which this app installs as a service. It is the
+// set of credentials THIS deployment generated or the owner recorded for it.
+//
+// **Honest scope of the encryption**: it protects copies (a backup, a lifted
+// disk), not the machine's own root — the agent has to be able to read these
+// back, and the install report beside them is plain text by design.
+service Vault {
+  rpc GetVault(GetVaultRequest) returns (VaultSnapshot);
+  // Upsert. Last write wins PER ENTRY on `updated_at`, so two devices editing
+  // different accounts never overwrite each other, and two devices editing the
+  // same one settle on the later edit rather than on whoever called last.
+  rpc PutVaultEntries(PutVaultEntriesRequest) returns (VaultSnapshot);
+  // Writes a TOMBSTONE rather than dropping the row: a delete that leaves no
+  // trace is resurrected by the next device that syncs its own copy.
+  rpc DeleteVaultEntry(DeleteVaultEntryRequest) returns (VaultSnapshot);
+}
+
+// ─────────────────────────── Control types ───────────────────────────
+
+message GetStateRequest {}
+
+message State {
+  string agent_version = 1;
+  Host host = 2;
+  repeated Service services = 3;
+  // When Discover last populated/refreshed this state (Unix ms), 0 if never.
+  int64 discovered_at = 4;
+}
+
+message Host {
+  string hostname = 1;
+  string os_id = 2;          // "debian", "ubuntu", …
+  string os_pretty_name = 3;
+  string arch = 4;           // "aarch64", "x86_64"
+  // "single" (scenario A) or "relay" (scenario B: this host relays to a home
+  // peer behind the WireGuard tunnel).
+  string topology = 5;
+  // The names this host actually serves, read back out of its Caddyfile —
+  // every site block's header is the list of hostnames Caddy answers on.
+  // Empty on a host with no Caddyfile, and on any agent older than the build
+  // that added this, so a client must treat "empty" as "ask the person".
+  repeated string served_hostnames = 6;
+  // Derived from the above: the domain the most served names agree on, then
+  // the rest. A DERIVATION, not a record — the host stores services, not
+  // addresses — so a client offers it for confirmation rather than saving it
+  // unseen. See `install::caddy::domains`.
+  repeated string domains = 7;
+}
+
+enum ServiceStatus {
+  SERVICE_STATUS_UNSPECIFIED = 0;
+  SERVICE_STATUS_RUNNING = 1;
+  SERVICE_STATUS_STOPPED = 2;
+  SERVICE_STATUS_PARTIAL = 3;   // some containers up, some down
+  SERVICE_STATUS_ERROR = 4;
+}
+
+message Service {
+  string id = 1;             // catalog id: "mailcow", "vaultwarden", "vpn", …
+  string display_name = 2;
+  ServiceStatus status = 3;
+  string version = 4;        // image tag / detected version, "" if unknown
+  repeated Container containers = 5;
+
+  // This service is on the host, and gryonixNexus did not put it there — its
+  // compose file is somewhere this product never writes one.
+  //
+  // **The app must not offer to manage it** (owner, 2026-09-08: "если агент
+  // найдёт на сервере уже что-то из нашего списка — чинить это всё,
+  // наследовать, это очень много ненужной работы"). Taking over a stranger's
+  // copy means owning its layout, its version, its data directory and its
+  // upgrade path forever, and every one of those is a guess. The card says so
+  // and offers the one path that leads somewhere: back it up, remove it, and
+  // install it again from the app.
+  //
+  // False for everything this product installed, including installs that
+  // predate this field: the test is WHERE the compose file is, and that has
+  // been the same directory since the first release.
+  bool installed_outside = 6;
+}
+
+message Container {
+  string name = 1;
+  string image = 2;
+  string state = 3;          // "running", "exited", …
+  string health = 4;         // "healthy", "unhealthy", "", …
+  // The port string exactly as `docker ps` prints it
+  // ("0.0.0.0:8080->80/tcp, [::]:8080->80/tcp"), "" when nothing is published.
+  // Kept as the engine's own string rather than parsed into a structure: what
+  // the section promises is to SHOW where a container is reachable, and a
+  // parser that silently drops a form docker prints would be worse than the
+  // raw line.
+  string ports = 5;
+}
+
+message HostMetricsRequest {
+  // Poll cadence hint in seconds; the agent may clamp it. 0 → agent default.
+  uint32 interval_seconds = 1;
+}
+
+// Mirrors HostMetricsSample in the Swift engine. Counters are cumulative; the
+// client derives rates from consecutive samples (same as today).
+message MetricsSample {
+  int64 sampled_at = 1;      // Unix ms
+  uint32 cpu_cores = 2;
+  double cpu_percent = 3;
+  int64 mem_total_bytes = 4;
+  int64 mem_used_bytes = 5;
+  int64 swap_total_bytes = 6;
+  int64 swap_used_bytes = 7;
+  double uptime_seconds = 8;
+  double load1 = 9;
+  double load5 = 10;
+  double load15 = 11;
+  int64 net_received_bytes = 12;
+  int64 net_sent_bytes = 13;
+  int64 disk_read_bytes = 14;
+  int64 disk_written_bytes = 15;
+  repeated DiskMount mounts = 16;
+  // Present only when the host exposes a thermal zone.
+  optional double temperature_celsius = 17;
+}
+
+message DiskMount {
+  string target = 1;         // "/"
+  int64 size_bytes = 2;
+  int64 used_bytes = 3;
+}
+
+message LogsRequest {
+  string service_id = 1;
+  // Tail this many lines before following; 0 → agent default.
+  uint32 tail = 2;
+}
+
+message LogLine {
+  string service_id = 1;
+  int64 at = 2;              // Unix ms
+  string stream = 3;         // "stdout" | "stderr"
+  string text = 4;
+  // Which container of the service emitted this line. A service (mailcow) is
+  // many containers; the stream multiplexes them all and tags each line so the
+  // client can group or filter by source.
+  string container = 5;
+}
+
+message DiscoverRequest {}
+
+message DiscoverResult {
+  repeated Service services = 1;
+  // Human-readable notes about anything ambiguous the scan hit (unknown compose
+  // projects, partial installs) — surfaced to the user during adoption.
+  repeated string notes = 2;
+}
+
+// ─────────────────────────── Container inventory types ──────────────────────
+
+message ListContainersRequest {}
+
+// What one row of the section is.
+//
+// A compose project rather than a container is the unit because a stack is what
+// people start and stop: mailcow is eighteen containers, and eighteen rows of
+// it would bury every other thing on the host. Containers still travel inside
+// the group, so the UI can expand one.
+enum ContainerGroupKind {
+  CONTAINER_GROUP_KIND_UNSPECIFIED = 0;
+  CONTAINER_GROUP_KIND_COMPOSE_PROJECT = 1;
+  // Started with `docker run`, no compose project label. Its own row, because a
+  // host that quietly hides half of what it runs is the failure this section
+  // exists to fix.
+  CONTAINER_GROUP_KIND_STANDALONE = 2;
+}
+
+message ContainerGroup {
+  // What management addresses: the compose project name, or the container name
+  // for a standalone. Always a string the HOST reported, never client text.
+  string key = 1;
+  ContainerGroupKind kind = 2;
+  // What to show. The owner's name when they set one, the derived name
+  // otherwise.
+  string display_name = 3;
+  // The derived name, ALWAYS — including when the owner has renamed the group,
+  // so the UI can offer "back to the detected name" without asking the agent
+  // to re-derive it.
+  string derived_name = 4;
+  // True when `display_name` came from the owner rather than the rule.
+  bool renamed = 5;
+  // The catalog id when this group is a service the configurator installed
+  // ("mailcow", "vpn", …), "" when it is a stranger. The section shows both and
+  // marks the first: a list that hides what the app itself put there stops
+  // being an answer to "what is running on this machine".
+  string service_id = 6;
+  ServiceStatus status = 7;
+  repeated Container containers = 8;
+  // The compose files behind the project, as `docker compose ls` reports them.
+  // Empty for a standalone container. Shown before a destructive action: this
+  // stack is one we did not install, so what is about to be touched has to be
+  // named rather than promised.
+  repeated string config_files = 9;
+}
+
+message ContainerInventory {
+  repeated ContainerGroup groups = 1;
+  // Set when the host has no container engine reachable at all, so the client
+  // can say that instead of drawing an empty list that reads as "nothing runs
+  // here".
+  string unavailable_reason = 2;
+}
+
+message SetContainerGroupNameRequest {
+  // A key from a ContainerGroup this host reported. A key the host does not
+  // currently report is refused rather than stored: the name table is the
+  // agent's own state, and a client must not be able to grow it with strings
+  // that name nothing.
+  string key = 1;
+  // Empty CLEARS the owner's name and returns the group to its derived one.
+  // That is why clearing is this same verb rather than a second one: "set" and
+  // "reset" would be two ways to write one row.
+  string display_name = 2;
+}
+
+message ControlContainerGroupRequest {
+  // A key from a ContainerGroup this host reported.
+  string key = 1;
+  ServiceAction action = 2;
+}
+
+// Shaped like ServiceOperationEvent, and flat for the same reason: one message
+// shape per client, and a JSON debug codec that stays readable.
+message ContainerOperationEvent {
+  ServiceOperationPhase phase = 1;
+  string key = 2;
+  ServiceAction action = 3;
+  // PROGRESS only.
+  string text = 4;
+  string stream = 5;
+  // STARTED only: the container names about to be touched. A stack the app did
+  // not install is one whose contents the owner has not seen, so what is about
+  // to be acted on is NAMED rather than summarised.
+  repeated string containers = 6;
+  // COMPLETED only: the group as re-read after the action.
+  ContainerGroup group = 7;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 8;
+}
+
+message ContainerGroupLogsRequest {
+  string key = 1;
+  // Tail this many lines before following; 0 → agent default.
+  uint32 tail = 2;
+}
+
+message InspectContainerRequest {
+  // A container name as ListContainers reported it. Gated against the inventory
+  // the same way a group key is: the agent works with the HOST's string.
+  string name = 1;
+}
+
+// One environment variable of a container.
+//
+// The value TRAVELS even when `sensitive` is set, and that is deliberate rather
+// than an oversight: the tap that reveals it guards against someone reading the
+// screen over a shoulder, not against the device. A device that can call this
+// RPC is already paired and already holds a root-equivalent view of the host —
+// pretending otherwise by blanking the value would buy no safety and would cost
+// the one thing this screen is for, which is finding out how a stranger's
+// container is configured.
+message ContainerEnvVar {
+  string key = 1;
+  string value = 2;
+  // The agent's judgement that this looks like a credential, so the client
+  // knows to hide it by default. Decided HERE rather than in the app so every
+  // client hides the same set.
+  bool sensitive = 3;
+}
+
+message ContainerMount {
+  string source = 1;       // host path (for a volume: where the engine keeps it)
+  string destination = 2;  // path inside the container
+  string mode = 3;         // "rw" | "ro"
+  string kind = 4;         // "bind" | "volume"
+  // **A named volume's NAME, which is not its path.** `docker volume rm` and
+  // `docker volume inspect` take the name; `source` for a volume is
+  // `/var/lib/docker/volumes/<name>/_data`, which those commands reject.
+  // Empty for a bind mount, where the path IS the identity.
+  //
+  // Measured on a live host 2026-08-22: without this, "also delete its data"
+  // ran `docker volume rm /var/lib/docker/volumes/…/_data`, which fails — so
+  // the volume quietly survived a removal the owner had asked for.
+  string name = 5;
+}
+
+message ContainerDetail {
+  Container container = 1;
+  string created_at = 2;       // as the engine reports it
+  string restart_policy = 3;
+  string compose_project = 4;  // "" for a standalone container
+  string compose_service = 5;
+  string command = 6;
+  repeated ContainerEnvVar env = 7;
+  repeated ContainerMount mounts = 8;
+}
+
+message GetContainerBackupPlanRequest {
+  string key = 1;
+}
+
+message SetContainerBackupPlanRequest {
+  string key = 1;
+  // The owner's plan. Absent CLEARS the correction; a present-but-empty plan is
+  // "back up nothing", which is a different instruction. The two look identical
+  // if you read emptiness instead of PRESENCE — the lesson Authelia's protected
+  // list already cost once.
+  optional ContainerBackupPlan plan = 2;
+}
+
+message RunContainerGroupBackupRequest {
+  string key = 1;
+}
+
+// One archive of a stranger's group.
+message ContainerBackupEvent {
+  ServiceOperationPhase phase = 1;
+  string key = 2;
+  // PROGRESS only.
+  string text = 3;
+  string stream = 4;
+  // STARTED only: the plan this run is executing, so the log reads against the
+  // same list the sheet showed. A run whose plan the owner cannot see is a run
+  // they have to trust blind.
+  ContainerBackupPlan plan = 5;
+  // COMPLETED only: the archive written, when one was.
+  BackupArchive archive = 6;
+  // COMPLETED only, sent even on failure and before the error trailer: the
+  // group as re-read, because a backup that stopped a stack and failed leaves
+  // the first question as "is it running again".
+  ContainerGroup group = 7;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 8;
+}
+
+message PreviewContainerGroupRemovalRequest {
+  string key = 1;
+  bool purge_data = 2;
+  bool purge_backups = 3;
+}
+
+// Exactly what `RemoveContainerGroup` would delete for the same toggles.
+message ContainerRemovalPreview {
+  string key = 1;
+  // Always removed: the containers themselves.
+  repeated string containers = 2;
+  // Removed only with purge_data.
+  repeated string volumes = 3;
+  repeated string paths = 4;
+  // Removed only with purge_backups.
+  repeated string backup_paths = 5;
+  // What this preview could NOT work out, in the same never-guess-quietly
+  // spirit as the backup plan's notes. A path the agent declines to touch is
+  // named here rather than silently dropped.
+  repeated string notes = 6;
+}
+
+message RemoveContainerGroupRequest {
+  string key = 1;
+  // Both default to false, which is "stop and remove the containers, keep
+  // everything they held". Independent, exactly as the catalog's own removal.
+  bool purge_data = 2;
+  bool purge_backups = 3;
+}
+
+message ContainerRemovalEvent {
+  ServiceOperationPhase phase = 1;
+  string key = 2;
+  string text = 3;
+  string stream = 4;
+  // STARTED only: what is about to go, so the stream and the confirmation
+  // sheet agree.
+  ContainerRemovalPreview removing = 5;
+  // COMPLETED only: what the host reports afterwards. Absent means the group
+  // is gone, which is the successful outcome; present means containers
+  // survived, and that is what a half-finished removal looks like.
+  ContainerGroup group = 6;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 7;
+}
+
+message UpdateContainerGroupRequest {
+  string key = 1;
+  // Skip the backup that normally precedes the pull. Refused for a group whose
+  // plan says a database must be dumped — see the verb's doc.
+  bool skip_backup = 2;
+}
+
+message ContainerUpdateEvent {
+  ServiceOperationPhase phase = 1;
+  string key = 2;
+  string text = 3;
+  string stream = 4;
+  // STARTED only: image reference → the id running BEFORE the pull. Read
+  // before, never after: `docker pull` moves the TAG, so once it has run there
+  // is nobody left to ask what was there.
+  map<string, string> previous_images = 5;
+  // COMPLETED only.
+  bool rolled_back = 6;
+  bool already_current = 7;
+  ContainerGroup group = 8;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 9;
+}
+
+message GetContainerBackupScheduleRequest {
+  string key = 1;
+}
+
+message SetContainerBackupScheduleRequest {
+  string key = 1;
+  // "daily" | "weekly" | "monthly". EMPTY switches it off for this group — the
+  // same "empty clears it" shape as the group's name and its plan.
+  //
+  // Deliberately NOT a systemd calendar expression: nothing here writes a
+  // systemd timer. See ContainerBackupSchedule for why.
+  string schedule = 2;
+}
+
+// **Run by the agent itself, not by a systemd timer, and that is the decision
+// worth stating.** A per-group timer unit would be a new root-owned file with a
+// name derived from a compose project — so the erase wrappers would need a glob
+// for it on BOTH generation routes, and a managed path that no wrapper removes
+// is this project's most-repeated defect (the autobackup timer, the
+// `.bak.<epoch>` copies, the DDNS timer: three times, each time written down,
+// each time broken by the next new file). The agent is already a daemon, its
+// schedule lives in `state.db`, and that database is already carried off with
+// the agent's state directory. Nothing new is left behind by construction.
+//
+// The cost is honest and bounded: an agent that is down misses its window. That
+// is what `Persistent=true` buys a systemd timer, so the agent does the same
+// thing itself — on start, a group whose turn has passed runs immediately.
+message ContainerBackupSchedule {
+  string key = 1;
+  string schedule = 2;
+  bool enabled = 3;
+  // What the timer last did, so a scheduled run that has been failing every
+  // night is visible without opening a shell. The catalog's updates learned
+  // this the expensive way: a host whose backup fails nightly looked passing.
+  string last_outcome = 4;
+  string last_run = 5;
+}
+
+enum ContainerDatabaseEngine {
+  CONTAINER_DATABASE_ENGINE_UNSPECIFIED = 0;
+  CONTAINER_DATABASE_ENGINE_POSTGRES = 1;
+  CONTAINER_DATABASE_ENGINE_MYSQL = 2;
+  CONTAINER_DATABASE_ENGINE_MARIADB = 3;
+  CONTAINER_DATABASE_ENGINE_MONGO = 4;
+}
+
+// One database to dump from INSIDE its own container before anything is
+// archived. Tarring a live database directory produces a corrupt backup, which
+// is the single most expensive thing this plan exists to prevent.
+message ContainerDatabaseDump {
+  string container = 1;
+  ContainerDatabaseEngine engine = 2;
+  string database = 3;
+  string user = 4;
+  // The name of the env var of THAT container holding the password. The VALUE
+  // is deliberately not carried: the dump command reads it inside the
+  // container, because `docker exec` argv is world-readable through /proc.
+  string password_env = 5;
+}
+
+message ContainerBackupPlan {
+  string key = 1;
+  // Host paths to archive: the bind-mount sources of the group's containers,
+  // minus anything a dump already covers.
+  repeated string paths = 2;
+  // Named volumes to archive. Separate from paths because they are read through
+  // a helper container, not straight off the filesystem.
+  repeated string volumes = 3;
+  repeated ContainerDatabaseDump databases = 4;
+  // Stop the stack for the duration. Set when a database was found that cannot
+  // be dumped — an engine embedded in the app's own container, or one whose
+  // credentials are not in the environment. A consistent archive of a stopped
+  // stack beats a quiet, corrupt archive of a running one.
+  bool stop_while_archiving = 5;
+  // False when the owner has corrected this plan.
+  bool detected = 6;
+  // What the detection concluded and why, in the owner's language-independent
+  // form (the client localises nothing here — these name paths and images).
+  // Shown on the sheet: a guess presented as a fact is the failure this whole
+  // screen is trying to avoid.
+  repeated string notes = 7;
+}
+
+// ─────────────────────────── Management types ───────────────────────────
+
+message ServiceStatusRequest {
+  // A catalog id, as reported by GetState/Discover ("mailcow", "vpn", …).
+  string service_id = 1;
+}
+
+message ServiceStatusResponse {
+  Service service = 1;
+  // False when the id is a real catalog service that is not on this host. NOT
+  // an error: "installed but its container is gone" and "never installed" are
+  // both states the user is entitled to see, and the SSH path already treats a
+  // missing container as a warning row rather than a failed probe.
+  bool installed = 2;
+}
+
+// What a management call does to a service. UNSPECIFIED is rejected rather than
+// defaulted: a client that failed to set the field must not silently perform
+// some action on a live service.
+enum ServiceAction {
+  SERVICE_ACTION_UNSPECIFIED = 0;
+  SERVICE_ACTION_START = 1;
+  // Containers are stopped, never removed — `start` must bring the SAME ones
+  // back. (`compose down` is uninstall, and it lives behind its own wrapper.)
+  SERVICE_ACTION_STOP = 2;
+  SERVICE_ACTION_RESTART = 3;
+}
+
+message ControlServiceRequest {
+  string service_id = 1;
+  ServiceAction action = 2;
+}
+
+enum ServiceOperationPhase {
+  SERVICE_OPERATION_PHASE_UNSPECIFIED = 0;
+  // First event: what the agent resolved the id to, before touching anything.
+  SERVICE_OPERATION_PHASE_STARTED = 1;
+  // One line of the container engine's output.
+  SERVICE_OPERATION_PHASE_PROGRESS = 2;
+  // Last event: the status as re-read AFTER the action.
+  SERVICE_OPERATION_PHASE_COMPLETED = 3;
+}
+
+// A flat event rather than a oneof: every client decodes one message shape, and
+// the JSON debug codec stays readable.
+message ServiceOperationEvent {
+  ServiceOperationPhase phase = 1;
+  string service_id = 2;
+  ServiceAction action = 3;
+  // PROGRESS only: one output line and which pipe it came from
+  // ("stdout" | "stderr").
+  string text = 4;
+  string stream = 5;
+  // STARTED only: the compose projects this service resolved to. One service
+  // can be several projects (VPN = the panel plus each protocol engine), and
+  // the user is entitled to see what is about to be touched.
+  repeated string projects = 6;
+  // COMPLETED only: the service as re-read after the action.
+  Service service = 7;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 8;
+}
+
+// ─────────────────────────── Metrics history types ───────────────────────────
+
+message MetricsHistoryRequest {
+  // One of the collector's bucket names: "10s", "1m", "10m", "1h", "1d", "1w".
+  // Anything else is refused — the agent never builds a path out of client text.
+  string bucket = 1;
+  // Keep only the most recent N points; 0 → everything the bucket holds. The
+  // buckets are already trimmed by the collector, so this is a courtesy for a
+  // client that wants less, not a safety limit.
+  uint32 limit = 2;
+  // Drop points older than this (Unix ms); 0 → no lower bound. The app picks a
+  // PERIOD and the bucket is an implementation detail, so the window is applied
+  // where the data is rather than after transferring rows nobody draws.
+  int64 since = 3;
+}
+
+message MetricsHistoryResponse {
+  // Echoed back so a client can tell which bucket answered — the period→bucket
+  // mapping lives in the app, and a silent substitution here would misdate the
+  // chart's whole X axis.
+  string bucket = 1;
+  // Oldest first, as the collector writes them.
+  repeated MetricsHistoryPoint points = 2;
+}
+
+// One CSV row of a bucket file, in the shape the app's MetricsHistoryPoint
+// already has. Optionals mirror the collector's EMPTY fields exactly: the first
+// sample after a daemon start has no rates, and most VPSes have no thermal
+// zone. A zero would be a lie in both cases (a flat 0 B/s line, 0 °C).
+message MetricsHistoryPoint {
+  int64 at = 1;                                // Unix ms
+  optional double cpu_percent = 2;
+  int64 mem_used_bytes = 3;
+  int64 mem_total_bytes = 4;
+  int64 disk_used_bytes = 5;
+  int64 disk_total_bytes = 6;
+  optional double net_received_per_second = 7;
+  optional double net_sent_per_second = 8;
+  optional double disk_read_per_second = 9;
+  optional double disk_written_per_second = 10;
+  double load1 = 11;
+  optional double temperature_celsius = 12;
+}
+
+// ─────────────────────────── Backup types ───────────────────────────
+
+message ListBackupsRequest {
+  // A catalog id, as reported by GetState/Discover. The agent maps it to the
+  // wrapper's own service label; a client never names a directory or a target.
+  string service_id = 1;
+}
+
+message BackupList {
+  string service_id = 1;
+  // The directory the agent resolved for this service, echoed so the client can
+  // show where archives live and can match a path it later asks to delete. It
+  // is RESOLVED, never accepted: the backup root is per-deployment settings, so
+  // the agent reads it from the wrapper the setup generated on this host rather
+  // than from a constant or from the request.
+  string directory = 2;
+  // Newest first, the order `ls -lht` gave the SSH path.
+  repeated BackupArchive archives = 3;
+}
+
+message BackupArchive {
+  string name = 1;            // basename — what a picker shows
+  string path = 2;            // absolute path, what delete/restore take
+  int64 size_bytes = 3;
+  int64 modified_at = 4;      // Unix ms
+  // mailcow stores each backup as a DIRECTORY. Those restore fine but cannot be
+  // downloaded as one file, so the UI offers no share button for them.
+  bool directory = 5;
+}
+
+message ListContainerGroupBackupsRequest {
+  // The group key, as ListContainers reports it. Never a directory: the agent
+  // resolves the path from its own root, so a caller cannot name one.
+  string key = 1;
+}
+
+message ContainerBackupList {
+  string key = 1;
+  // The directory the agent resolved, echoed so the app can say where the
+  // archives live. RESOLVED, never accepted — same rule as BackupList.
+  string directory = 2;
+  // Newest first, the same order and the same shape the catalog's list uses:
+  // one screen draws both, and two shapes would be two screens.
+  repeated BackupArchive archives = 3;
+}
+
+message EstimateBackupRequest {
+  string service_id = 1;
+}
+
+message BackupEstimate {
+  // On-disk size of everything a run would archive, before compression.
+  int64 data_bytes = 1;
+  // Free space on the filesystem holding the backup directory.
+  int64 free_bytes = 2;
+}
+
+// Whether THIS run encrypts. UNSPECIFIED is not an error and not "no": it means
+// "use the service's own default", which is knowledge that lives in the wrapper
+// (secret stores yes, bulk media no — GPG over a photo library is hours of CPU
+// on a Raspberry Pi). Leaving the choice to the wrapper is what keeps the
+// default in one place instead of teaching it to the agent as well.
+enum BackupEncryption {
+  BACKUP_ENCRYPTION_UNSPECIFIED = 0;
+  BACKUP_ENCRYPTION_ENABLED = 1;
+  BACKUP_ENCRYPTION_DISABLED = 2;
+}
+
+message RunBackupRequest {
+  string service_id = 1;
+  BackupEncryption encryption = 2;
+  // Only read when this run encrypts. It travels in the request body over the
+  // SSH tunnel and is written to the wrapper's STDIN on the far side — never
+  // into argv, where /proc shows it to every account on the box. Nothing on the
+  // agent side logs this message.
+  //
+  // Empty is allowed on purpose: the wrapper then falls back to the passphrase
+  // stored for the scheduled runs, and only it knows whether that file exists.
+  string passphrase = 3;
+}
+
+// Phase reuses ServiceOperationPhase: STARTED (what is about to be touched),
+// PROGRESS (one output line), COMPLETED (the state as re-read afterwards). One
+// vocabulary for every streamed operation, so a client renders them the same.
+message BackupEvent {
+  ServiceOperationPhase phase = 1;
+  string service_id = 2;
+  // PROGRESS only: one output line and the pipe it came from.
+  string text = 3;
+  string stream = 4;
+  // COMPLETED only, and only when the run announced an archive of its own.
+  // mailcow's tool names and rotates its archives itself and announces nothing
+  // this could carry — the listing below is the answer for it.
+  BackupArchive archive = 5;
+  // COMPLETED only: the backup directory as re-read AFTER the run. It is sent
+  // even when the run FAILED, before the error trailer, because the first
+  // question after a failed backup is "do I have a backup or not" — the same
+  // two-channel rule ControlService follows with its post-action status.
+  BackupList backups = 6;
+  // STARTED only: the wrapper label the id resolved to, so the user can see
+  // what is about to run (ControlService names its compose projects for the
+  // same reason).
+  string target = 7;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 8;
+}
+
+message DeleteBackupRequest {
+  string service_id = 1;
+  // An absolute path from a listing this agent produced. Checked here against
+  // the service's own resolved directory before it is passed on, and checked
+  // AGAIN by the wrapper against the directories baked into it at generation
+  // time — the client is not trusted by either gate.
+  string path = 2;
+}
+
+message GetBackupScheduleRequest {}
+
+// Mirrors AutoBackupSettings (Swift) and the wrapper's own config file:
+// SCHEDULE / RETENTION / SERVICES.
+message BackupSchedulePolicy {
+  // The wrapper's own schedule grammar, verbatim ("off", "every:1d@04:30") —
+  // deliberately not parsed here, same reasoning as UpdatePolicy.schedule.
+  string schedule = 1;
+  // How many backups of each service the wrapper keeps.
+  int32 retention = 2;
+  // Which services the timer backs up, as the SERVER holds them.
+  repeated string services = 3;
+}
+
+message SetBackupScheduleRequest {
+  string schedule = 1;
+  int32 retention = 2;
+  repeated string services = 3;
+  // Set once, for unattended encrypted runs (vaultwarden-style). Empty means
+  // "leave whatever passphrase is already stored" — never read back, and
+  // travels the same trust boundary RunBackupRequest.passphrase already does.
+  string passphrase = 4;
+}
+
+// ─────────────────────────── Update types ───────────────────────────
+
+message CheckUpdatesRequest {
+  // Empty asks about every service the wrapper knows. That is the shape the
+  // app's screen actually needs, and it is one pass over the host instead of
+  // one call per service.
+  string service_id = 1;
+}
+
+message UpdateCheckResult {
+  repeated ServiceUpdateStatus services = 1;
+}
+
+message ServiceUpdateStatus {
+  string service_id = 1;
+  UpdateAvailability availability = 2;
+  // AVAILABLE only: every image reference that moved, NAMED rather than
+  // counted — a database image moving is a different risk from the app image
+  // moving, and that is the first thing worth knowing before applying it.
+  repeated string moved_images = 3;
+  // UNKNOWN only, and never empty there: which question could not be answered
+  // (the registry did not respond, the host never pulled the image, docker is
+  // not running).
+  string reason = 4;
+}
+
+enum UpdateAvailability {
+  UPDATE_AVAILABILITY_UNSPECIFIED = 0;
+  UPDATE_AVAILABILITY_CURRENT = 1;
+  UPDATE_AVAILABILITY_AVAILABLE = 2;
+  // The check could not answer. A state of its own, which must never collapse
+  // into CURRENT: "nothing to do" is the one answer an owner acts on by doing
+  // nothing, so an unanswered check that read as current would be a silent
+  // instruction to ignore the server.
+  UPDATE_AVAILABILITY_UNKNOWN = 3;
+  // There is deliberately no SELF_MANAGED value. A service that ships its own
+  // updater (mailcow, GitLab) produces NO row here at all, because the wrapper
+  // prints no marker for it — it has no standing to call such a service
+  // current or out of date, since what it runs is decided by its own updater
+  // at run time. The SSH route behaves identically (its parser only sees
+  // marker lines), and the app labels those services from its own catalog. Two
+  // routes that answered differently would be worse than either answer.
+}
+
+message RunUpdateRequest {
+  string service_id = 1;
+}
+
+message UpdateEvent {
+  ServiceOperationPhase phase = 1;
+  string service_id = 2;
+  // PROGRESS only: one output line and the pipe it came from.
+  string text = 3;
+  string stream = 4;
+  // COMPLETED only: how the run ended, taken from the wrapper's own marker
+  // rather than from an exit code. Sent even when the run FAILED, before the
+  // error trailer — the same two-channel rule the other streamed operations
+  // follow, because after a failed update the first question is what the
+  // service is running now.
+  UpdateOutcome outcome = 5;
+  // ROLLED_BACK / FAILED only: the sentence the server gave, verbatim. It is
+  // the entire explanation the owner gets, so nothing here rewords it.
+  string reason = 6;
+  // COMPLETED only: the service as re-read AFTER the run.
+  ServiceStatusResponse status = 7;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 8;
+}
+
+enum UpdateOutcome {
+  UPDATE_OUTCOME_UNSPECIFIED = 0;
+  UPDATE_OUTCOME_UPDATED = 1;
+  // Applied, did not come back healthy, and the previous images were put back
+  // by retagging — which needs no registry and no network.
+  UPDATE_OUTCOME_ROLLED_BACK = 2;
+  // The run stopped BEFORE any image was swapped, so the service is untouched.
+  // The common case is a refused backup: everything that encrypts by default
+  // refuses an unattended one without a stored passphrase.
+  UPDATE_OUTCOME_FAILED = 3;
+}
+
+message GetUpdatePolicyRequest {}
+
+message UpdatePolicy {
+  // The wrapper's own schedule grammar, verbatim ("off", "every:1d@04:30").
+  // Deliberately not parsed here: the app already owns that grammar for the
+  // backup schedule, and a second parser on this path is exactly the drift
+  // both wrappers were merged to prevent.
+  string schedule = 1;
+  // The services the timer covers, as the SERVER holds them — already stripped
+  // of anything that ships its own updater.
+  repeated string services = 2;
+  // What the last run left behind, in the order the server recorded it. Empty
+  // on a host that has never run one, which is not an error.
+  repeated UpdateRunRecord last_run = 3;
+  // When that run started, Unix ms. Zero when the record carries no timestamp:
+  // only a scheduled run writes one, a manual run just appends.
+  int64 last_run_at = 4;
+}
+
+message UpdateRunRecord {
+  string service_id = 1;
+  UpdateOutcome outcome = 2;
+  string reason = 3;
+}
+
+message SetUpdateScheduleRequest {
+  string schedule = 1;
+  repeated string services = 2;
+}
+
+// ─────────────────────────── Lockdown types ───────────────────────────
+
+message GetLockdownRequest {}
+
+// Mirrors AdminLockdownState (StatusOperations, Swift) one-to-one: everything
+// public, every admin page VPN-only, or just the listed vhosts.
+enum LockdownMode {
+  LOCKDOWN_MODE_UNSPECIFIED = 0;
+  LOCKDOWN_MODE_OFF = 1;
+  LOCKDOWN_MODE_ALL = 2;
+  LOCKDOWN_MODE_ONLY = 3;
+}
+
+message LockdownState {
+  LockdownMode mode = 1;
+  // Only meaningful when mode == LOCKDOWN_MODE_ONLY — empty in every other
+  // mode, the same way the wrapper's own "on"/"off" lines carry no hosts.
+  repeated string hosts = 2;
+}
+
+message SetLockdownRequest {
+  // UNSPECIFIED is refused rather than defaulted: a client that failed to set
+  // this must not silently flip a live server's guard.
+  LockdownMode mode = 1;
+  // Required (post-validation, non-empty) when mode == LOCKDOWN_MODE_ONLY;
+  // ignored otherwise. A request whose every host fails the wrapper's own
+  // charset check is treated the same as an empty list — see SetLockdown's
+  // doc comment on the service above.
+  repeated string hosts = 2;
+}
+
+// ─────────────────────────── Security types ────────────────────────────
+
+message GetSecurityStatusRequest {}
+
+// Everything the app's Security card draws. Every field is derived from a
+// `cscli` call at request time — nothing is stored — so the numbers are live,
+// and a host whose CrowdSec is missing or broken comes back with `present`
+// false and the rest zeroed rather than as an error (the card then says the
+// protection is not in place, which is the true and useful thing to show).
+message SecurityStatus {
+  // cscli is on the host AND `/etc/crowdsec/config.yaml` exists — the same
+  // "configured, not merely unpacked" test the installer uses, because a
+  // failed postinst leaves the binary answering and nothing behind it.
+  bool present = 1;
+  bool engine_running = 2;
+  bool bouncer_running = 3;
+  // e.g. "v1.8.0". Empty when it could not be read.
+  string engine_version = 4;
+  // Local alerts CrowdSec raised in the last 24 hours (attacks it saw on THIS
+  // host's journals — distinct from the community blocklist below).
+  uint32 alerts_24h = 5;
+  // Addresses this host is actively blocking right now off its own decisions.
+  uint32 local_bans = 6;
+  // Size of the community blocklist the bouncer is also enforcing — addresses
+  // other CrowdSec installations reported, dropped here before they ever
+  // reach a service. Read from the bouncer's own metrics.
+  uint32 community_blocklist_ips = 7;
+  // Packets the bouncer has dropped since it started, across every source.
+  uint64 packets_dropped = 8;
+  // The scenarios that have fired most on this host, all-time, most first.
+  repeated SecurityScenario top_scenarios = 9;
+  // The most recent attacks, newest first — for the "caught these" list.
+  repeated SecurityBan recent_bans = 10;
+}
+
+message SecurityScenario {
+  // The CrowdSec scenario id, e.g. "crowdsecurity/ssh-bf".
+  string name = 1;
+  uint32 count = 2;
+}
+
+message SecurityBan {
+  string ip = 1;
+  // Two-letter country code from CrowdSec's GeoIP enrichment, "" if unknown.
+  string country = 2;
+  string scenario = 3;
+  // When the alert was raised, as CrowdSec's own RFC 3339 string
+  // ("2026-09-01T16:25:37Z"). Passed through rather than parsed to a number in
+  // the agent: the client has a date formatter and the agent has no date
+  // library, and a "3 minutes ago" computed on the host drifts against the
+  // phone's clock anyway.
+  string at = 4;
+}
+
+// ──────────────────────── SSH password login types ─────────────────────
+
+message GetSshPasswordStateRequest {
+  // The account the app signs in with, whose `authorized_keys` decides whether
+  // closing the door is safe. Empty — the gryonixNexus control user this host
+  // was provisioned with, which is what an app that was never told anything
+  // else means.
+  string login_user = 1;
+  // The app's own public key, one OpenSSH line. The guard looks for THIS key
+  // and not merely for a non-empty file: an existing-user install leaves the
+  // owner's own keys in place while the app itself signs in with a password,
+  // and "some key is present" would pass on exactly the host that must not be
+  // closed. Empty — nothing is proven, so nothing is closed.
+  string app_public_key = 2;
+}
+
+message SetSshPasswordLoginRequest {
+  // false — close it (key login only). true — allow passwords again, by
+  // removing the drop-in this product wrote and reloading sshd.
+  //
+  // **Both directions exist because a switch without a way back is a trap.**
+  // The file names itself and says how to remove it, but a host reached only
+  // from the app is one where "edit /etc/ssh by hand" is not an answer.
+  //
+  // Named for what it allows rather than `open`, which is a keyword in two of
+  // the three languages generated from this file and arrives as `open_` in
+  // one of them.
+  bool allow_passwords = 1;
+  string login_user = 2;
+  string app_public_key = 3;
+}
+
+// What this host's sshd accepts right now, as sshd itself resolved it.
+message SshPasswordState {
+  // sshd accepts passwords (either PasswordAuthentication or the
+  // keyboard-interactive route PAM answers through). Meaningless unless
+  // `known` — a host that could not be asked answers false for both.
+  bool password_login_open = 1;
+  // sshd answered `sshd -T`, so the field above is a reading rather than a
+  // guess. A file on disk is not an answer about a running daemon: a cloud
+  // image's own `50-cloud-init.conf` outranks a drop-in numbered above it, and
+  // the merged configuration is the only place that shows.
+  bool known = 2;
+  // The app's key is in `login_user`'s `authorized_keys` — the one condition
+  // under which closing is allowed at all.
+  bool app_key_present = 3;
+  // This product's drop-in is on disk. Distinct from `password_login_open`:
+  // present-and-outranked is the failure mode the numbering exists to prevent,
+  // and it is only visible as these two disagreeing.
+  bool drop_in_present = 4;
+  // This host has an sshd to ask.
+  bool sshd_present = 5;
+  // The account that was actually checked, resolved here when the request left
+  // it empty — the app shows it, because "which account" is precisely what is
+  // ambiguous from the client side.
+  string login_user = 6;
+  // One sentence for the owner about what just happened, in the same words the
+  // install log uses. Empty on a plain read.
+  string detail = 7;
+}
+
+// ─────────────────────────── Uninstall types ───────────────────────────
+
+message RemoveServiceRequest {
+  string service_id = 1;
+  // Both default to false, which is also the wrapper's default: data and
+  // backups SURVIVE a removal unless the owner says otherwise. The two are
+  // independent — dropping the data while keeping the backups is the ordinary
+  // way to remove something you might reinstall.
+  bool purge_data = 2;
+  bool purge_backups = 3;
+}
+
+message UninstallEvent {
+  ServiceOperationPhase phase = 1;
+  string service_id = 2;
+  string text = 3;
+  string stream = 4;
+  // COMPLETED only: what the host reports about this service afterwards, which
+  // for a successful removal is `installed = false`. A removal that half
+  // happened is the case this field exists for, and it is sent before an error
+  // trailer for the same reason the other streams send their state.
+  ServiceStatusResponse status = 5;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 6;
+}
+
+// ─────────────────────────── Restore types ───────────────────────────
+
+message RunRestoreRequest {
+  string service_id = 1;
+  // Absolute path of the archive to restore FROM — one of the paths
+  // Backup.ListBackups already returned for this service. The wrapper is the
+  // one gate on which paths may be read (it matches against the literal
+  // backup directories baked in at generation time); the client
+  // (CommandCatalog.Restore.isValidArchivePath) already mirrors that check
+  // before the request is even sent.
+  string archive_path = 2;
+  // GPG passphrase for an encrypted archive, sent to the wrapper's STDIN —
+  // never argv. Empty when the archive is not encrypted; the wrapper decides
+  // that from the ".gpg" suffix on archive_path, not from a flag here.
+  string passphrase = 3;
+}
+
+message RestoreEvent {
+  ServiceOperationPhase phase = 1;
+  string service_id = 2;
+  string stream = 3;
+  string text = 4;
+  // COMPLETED only: the freshly re-read status, for the same reason
+  // UninstallEvent carries one — a restore that failed partway through still
+  // leaves the service in SOME state, and that is the first thing worth
+  // reporting after a run that touches a service's live data.
+  ServiceStatusResponse status = 5;
+  // **The name of the run on the HOST, so the phone does not have to stay.**
+  // Set on every event of the stream, and the same id `WatchJob` takes: a
+  // client that closed mid-run comes back, asks for this id, and gets the
+  // journal replayed and then followed. Empty when this agent build keeps no
+  // journal for the operation — an older host, where the promise "close the
+  // app, it carries on" holds for the WORK but not for the report of it.
+  string job_id = 6;
+}
+
+// ─────────────────────────── Install types ───────────────────────────
+
+message InstallServiceRequest {
+  string service_id = 1;
+
+  // Deployment-level context every service's declarative half reads (mirrors
+  // install::context::Input field for field). The agent holds no notion of
+  // "this deployment's domain" on its own — state.db carries services and
+  // paired devices, not a Deployment record — so the one party that HAS a
+  // Deployment sends these on every call rather than the agent guessing, or
+  // caching a copy that could go stale between calls.
+  string domain = 2;
+  repeated string additional_domains = 3;
+  bool local_only = 4;
+  string admin_username = 5;
+  // BCP-47-ish code the app's own AppLanguage already uses ("en", "ru", …).
+  // An unrecognized or empty code falls back to English rather than being
+  // refused — a cosmetic default, not a validated enum, because nothing on
+  // this path branches its BEHAVIOUR on language today (see
+  // InstallServiceEvent.text's own doc for why event text is not localized
+  // at all yet).
+  string language = 6;
+
+  // Per-service knobs, so this message does not grow a new field for every
+  // future service's settings. AdGuard Home reads "adguard_path" (default
+  // "/opt/adguardhome") and "adguard_hostname" (default "dns.<domain>") —
+  // absent or empty means "use the service's own default", the same rule
+  // `install::context::Input`'s own doc states for adguard_hostname.
+  map<string, string> settings = 7;
+
+  // Which half of the deployment this host is. The agent cannot work this out
+  // for itself and must not try: the two service-carrying roles differ in what
+  // the uninstall wrapper cleans (scenario B's home half owns a WireGuard
+  // tunnel) and in one sudoers line, and the only honest source is the client,
+  // which HAS the deployment — the same reason `domain` and `local_only` ride
+  // here rather than being sniffed from the host. Guessing from a live `wg0`
+  // was considered and rejected: a leftover or unrelated tunnel would make a
+  // plain single host claim to be scenario B and put someone else's tunnel in
+  // its cleanup list.
+  HostRole host_role = 8;
+
+  // What the install report needs and nothing else can supply, because none of
+  // it is visible from the host: the address a PTR record must resolve to and
+  // the name it should answer with, and — scenario B only — the tunnel
+  // endpoint the home half dials, plus the relay's own port, DNAT'd ports and
+  // the home tunnel address. All optional: a local-only deployment publishes
+  // no PTR (the report drops the line), and a single host has no tunnel.
+  string ptr_ip = 9;
+  string ptr_hostname = 10;
+  string tunnel_endpoint = 11;
+  uint32 relay_wg_port = 12;
+  repeated uint32 relay_forwarded_ports = 13;
+  string home_wg_address = 14;
+  // The UDP half of the same list, kept SEPARATE for the same reason
+  // `MailContext` keeps `forwardedPorts` and `forwardedUDPPorts` apart: the
+  // relay's ruleset needs one `tcp dport { … }` set and one `udp dport { … }`
+  // set, and a single merged list could only produce rules that open a port on
+  // a transport nothing listens on. Empty when the deployment selected no VPN
+  // protocol — every UDP forward this project has comes from one.
+  repeated uint32 relay_forwarded_udp_ports = 16;
+
+  // The app's OWN public key, so the uninstall wrapper this call writes can
+  // take it back at erase time.
+  //
+  // The agent cannot learn this by itself and, on a host it built alone, has
+  // nowhere to recover it from: the key is recovered out of the uninstall
+  // wrapper a previous SETUP wrote, and a host that never ran setup has no
+  // such file. Measured 2026-08-13 — a freshly generated wrapper carried ZERO
+  // authorized_keys references where a setup-built host carries six, meaning
+  // `--all` would have left the app with live SSH access to a machine the
+  // owner believes they erased.
+  //
+  // The on-disk wrapper still WINS when both exist: it names the key this host
+  // was actually handed, while the request names the key of whichever device
+  // happens to be calling — and with several devices paired those differ.
+  // Empty means "no key to take back", which is also what every client that
+  // predates this field says.
+  string dashboard_public_key = 15;
+}
+
+// Which half of a deployment a host is. UNSPECIFIED means SINGLE_HOST: a
+// client that predates this field is by definition not running scenario B
+// through the agent, and defaulting to the role with the SMALLEST cleanup list
+// is the safe direction — the home half's extra arms remove a WireGuard
+// tunnel, and doing that to a host that never had one is the outcome worth
+// avoiding.
+enum HostRole {
+  HOST_ROLE_UNSPECIFIED = 0;
+  HOST_ROLE_SINGLE_HOST = 1;
+  HOST_ROLE_VPS_RELAY = 2;
+  HOST_ROLE_HOME_BACKEND = 3;
+}
+
+// VPN client devices — add one, list them, take one away, hand back its
+// configuration.
+//
+// **The agent drives the PANEL's own API; it does not reimplement any of
+// this.** The same rule the backup and update verbs follow: the engine stays in
+// one place. That engine is the VPN panel, which already owns every protocol's
+// client format (WireGuard peers and their preshared keys, Shadowsocks users
+// inside one config.json, XRay uuids, an OpenVPN PKI driven through the
+// container's own shims) and — the part that a second implementation would get
+// wrong — the LOCK: every mutating route in that panel is serialized in-process,
+// because each of those stores is read-modify-write and two writers hand the
+// same address to two clients.
+//
+// What the agent adds is the contract: a catalog protocol id instead of a URL,
+// an argument vector built from its own table, and the panel's session handled
+// on the server side so the app never carries the panel's password.
+//
+// Every host that has any VPN protocol has the panel — the generator injects it
+// automatically — so "the panel is not installed here" is a real refusal
+// (failed_precondition), not a shape the app has to design around.
+// The mesh's own control plane — Headscale.
+//
+// **The engine is the `headscale` CLI inside its container, and this is the
+// only way the app can reach it.** That service has no web interface at all:
+// users, join keys and the node list exist solely behind a command line on the
+// server, so without these verbs "managed from the app" would mean an SSH
+// session and `docker exec`, which is exactly the gap docker-mailserver's
+// mailbox verbs were added to close.
+//
+// **Nothing here echoes the engine's raw JSON.** A node's own record embeds
+// the pre-auth key it joined with, secret included — observed on a live
+// server — so every message below names the fields it carries and the parser
+// takes only those. Returning the engine's output verbatim would have handed
+// every device's join key to anything that listed nodes.
+service Mesh {
+  // The users the mesh is organised by. A join key belongs to one of them.
+  rpc ListMeshUsers(ListMeshUsersRequest) returns (MeshUserList);
+  // Create one. Answers with the re-read listing, the rule every mutating
+  // verb on this route follows.
+  rpc CreateMeshUser(CreateMeshUserRequest) returns (MeshUserList);
+  // Mint a join key for a user. **This is the one response in the whole
+  // schema that carries a secret the caller must show**: the key is displayed
+  // once and cannot be read back, which is why it is returned rather than
+  // stored anywhere.
+  rpc CreateMeshAuthKey(CreateMeshAuthKeyRequest) returns (MeshAuthKey);
+  // The devices currently in the mesh.
+  rpc ListMeshNodes(ListMeshNodesRequest) returns (MeshNodeList);
+  // Remove a device. Answers with the re-read listing.
+  rpc DeleteMeshNode(DeleteMeshNodeRequest) returns (MeshNodeList);
+  // Publish this deployment's service names inside the mesh, pointed at the
+  // server's own mesh address.
+  //
+  // **Its own verb rather than part of the install, because the address does
+  // not exist yet at install time**: a node is given its mesh address when it
+  // JOINS, which is after the control server's configuration is written. The
+  // names themselves come from the caller because the app is what knows the
+  // deployment's hostnames — and they are the REAL hostnames, so the
+  // certificate Caddy already holds matches when a device connects by name.
+  rpc PublishMeshNames(PublishMeshNamesRequest) returns (MeshNameList);
+}
+
+message ListMeshUsersRequest {}
+
+message CreateMeshUserRequest {
+  // Free text from the operator; the engine sanitises it and the listing that
+  // comes back says what it settled on.
+  string name = 1;
+}
+
+message MeshUser {
+  // The engine's numeric id, as a string: it is what a key request names, and
+  // nothing on this route does arithmetic with it.
+  string id = 1;
+  string name = 2;
+}
+
+message MeshUserList {
+  repeated MeshUser users = 1;
+}
+
+message CreateMeshAuthKeyRequest {
+  string user_id = 1;
+  // Whether more than one device may join with it.
+  bool reusable = 2;
+  // Hours until it expires. 0 means the engine's own default.
+  uint32 expiration_hours = 3;
+}
+
+message MeshAuthKey {
+  // The secret itself. Shown once — the engine never hands it back.
+  string key = 1;
+  bool reusable = 2;
+  // Unix seconds; 0 when the engine did not say.
+  int64 expires_at = 3;
+}
+
+message ListMeshNodesRequest {}
+
+message DeleteMeshNodeRequest {
+  string node_id = 1;
+}
+
+message MeshNode {
+  string id = 1;
+  string name = 2;
+  // The mesh addresses the device answers on.
+  repeated string addresses = 3;
+  // Which user it belongs to.
+  string user = 4;
+  bool online = 5;
+  // Unix seconds; 0 when the engine did not say.
+  int64 last_seen = 6;
+}
+
+message MeshNodeList {
+  repeated MeshNode nodes = 1;
+}
+
+message PublishMeshNamesRequest {
+  // The hostnames to publish, exactly as the services are served — an empty
+  // list clears them, which is how a deployment stops publishing.
+  repeated string names = 1;
+  // Which node's address they point at. Empty means this deployment's own
+  // server, which is the only case the app has today.
+  string node_name = 2;
+}
+
+message MeshName {
+  string name = 1;
+  // The mesh address it resolves to.
+  string address = 2;
+}
+
+message MeshNameList {
+  repeated MeshName records = 1;
+}
+
+service Vpn {
+  // The client devices of one protocol.
+  rpc ListVpnClients(ListVpnClientsRequest) returns (VpnClientList);
+  // Add one. The name is the only thing the caller chooses; the panel decides
+  // the id, the address and the keys.
+  rpc AddVpnClient(AddVpnClientRequest) returns (VpnClientList);
+  // Take one away. Answers with the re-read listing, the same rule the mailbox
+  // and backup verbs follow: the client renders what the server reports.
+  rpc DeleteVpnClient(DeleteVpnClientRequest) returns (VpnClientList);
+  // One client's configuration, exactly as the protocol's own app imports it:
+  // a WireGuard/AmneziaWG .conf, an .ovpn profile, an ss:// or vless:// link.
+  rpc GetVpnClientConfig(GetVpnClientConfigRequest) returns (VpnClientConfig);
+}
+
+// The protocol a request is about, as the PANEL names it — `wireguard`,
+// `amneziawg`, `shadowsocks`, `xray`, `openvpn`. Not the catalog's own ids
+// (`wireguard-vpn`, `amnezia-wg`, `xray-reality`): the agent maps between them
+// from its own table, so the bytes on this field only ever select an arm.
+message ListVpnClientsRequest {
+  string protocol = 1;
+}
+
+message AddVpnClientRequest {
+  string protocol = 1;
+  // Free text from the operator. The panel sanitises and truncates it (an
+  // OpenVPN name becomes an X.509 CN, which is shorter than the field allows),
+  // and the listing that comes back says what it settled on.
+  string name = 2;
+}
+
+message DeleteVpnClientRequest {
+  string protocol = 1;
+  string client_id = 2;
+}
+
+message GetVpnClientConfigRequest {
+  string protocol = 1;
+  string client_id = 2;
+}
+
+message VpnClient {
+  string id = 1;
+  string name = 2;
+  // Whatever identifies the client at a glance for this protocol: an address
+  // for the tunnel protocols, the protocol name for the proxy ones, or
+  // "certificate" for OpenVPN. The panel decides it; nothing parses it.
+  string detail = 3;
+}
+
+message VpnClientList {
+  repeated VpnClient clients = 1;
+}
+
+message VpnClientConfig {
+  // The file's contents, or the link, as text.
+  string text = 1;
+  // What a saved file should be called, extension included — the panel's own
+  // choice per protocol (`.conf`, `.ovpn`, `.txt`).
+  string filename = 2;
+  // False for OpenVPN: a profile is several KB, far past what a phone camera
+  // scans, and the panel says so rather than letting a client draw one.
+  bool qr_is_useful = 3;
+}
+
+// Bring the host's own management surface up to date without installing
+// anything.
+//
+// **Why this is not just a corner of InstallService.** Two hosts can never
+// reach that path at all. Scenario B's relay carries NO services — it forwards
+// ports and terminates a tunnel — so nothing there is ever installed and its
+// wrappers (its own uninstall, the metrics collector) would stay whatever the
+// setup script last left. And a host that just had its LAST service removed
+// keeps wrappers that still dispatch on it, because RemoveService does not
+// regenerate them either. Both are the same failure as the one that motivated
+// the host half: a wrapper that disagrees with the machine it is on.
+//
+// Everything else is deliberately identical to InstallServiceRequest's own
+// host fields, because it renders the same files from the same inputs.
+// One machine a relay forwards to.
+//
+// **The singular fields below describe exactly one backend, which is all
+// scenario B ever had.** A relay standing in front of SEVERAL machines needs
+// each port to say which one it belongs to — DNAT sends a port to one place, so
+// two backends cannot share it and a single `home_wg_address` cannot express
+// the difference at all.
+//
+// Both shapes are read: a request that names peers wins, one that does not is
+// scenario B and is read as a single peer. Nothing is deprecated, because every
+// shipped client sends the singular form and a relay is the host that is
+// hardest to reach when its firewall is wrong.
+message HostPeer {
+  // Its address inside the tunnel — the DNAT destination.
+  string tunnel_address = 1;
+  repeated uint32 forwarded_ports = 2;      // TCP
+  repeated uint32 forwarded_udp_ports = 3;
+}
+
+message ProvisionHostRequest {
+  string domain = 1;
+  repeated string additional_domains = 2;
+  bool local_only = 3;
+  string admin_username = 4;
+  string language = 5;
+  // The whole deployment's per-service knobs, not one service's — the
+  // wrappers name every service's real directory. Same map, same rule as
+  // InstallServiceRequest.settings.
+  map<string, string> settings = 6;
+
+  HostRole host_role = 7;
+  string ptr_ip = 8;
+  string ptr_hostname = 9;
+  string tunnel_endpoint = 10;
+  uint32 relay_wg_port = 11;
+  repeated uint32 relay_forwarded_ports = 12;
+  string home_wg_address = 13;
+  // Every machine this relay forwards to. Empty means "read the singular
+  // fields above", which is what every client that predates this sends.
+  repeated HostPeer relay_peers = 17;
+  // Same split as InstallServiceRequest.relay_forwarded_udp_ports, and it
+  // matters more here: the relay reaches the agent ONLY through this call, so
+  // this is the only way its DNAT ever learns a VPN's UDP port.
+  repeated uint32 relay_forwarded_udp_ports = 15;
+  // Same field, same rule, as InstallServiceRequest.dashboard_public_key —
+  // and it matters MORE here, because the relay is a host this call is the
+  // only way to reach at all.
+  string dashboard_public_key = 14;
+}
+
+message ProvisionHostResponse {
+  // Absolute paths, in the order they were written — the answer to "what did
+  // this just change on my machine", which for a call that writes root-owned
+  // wrappers is the only useful thing to return.
+  repeated string written = 1;
+  // The control user whose sudoers whitelist was rewritten, or empty when the
+  // host has none. The agent never CREATES one: it reads the name out of the
+  // whitelist that is already there, so an empty answer means "nobody has ever
+  // been granted dashboard access here", not "it failed".
+  string control_user = 2;
+  // What this call did BESIDES writing files — the firewall shape it wrote or
+  // deliberately did not, the kernel settings it applied, the relay route sync.
+  //
+  // Not decoration: InstallService narrates the same work as stream events, and
+  // this verb has no stream, so on the ONE host that can never reach
+  // InstallService — scenario B's relay — these lines were being thrown away.
+  // Measured 2026-08-13: a relay refused to rewrite its own wrong-shaped
+  // ruleset and said so into a channel nobody read, which from the client's
+  // side looked exactly like success.
+  //
+  // Failures of these steps are reported here rather than as an error: they all
+  // run after the wrappers are on disk, and a firewall that could not be
+  // applied does not undo the files that were.
+  repeated string notes = 3;
+}
+
+message InstallServiceEvent {
+  ServiceOperationPhase phase = 1;
+  string service_id = 2;
+  // PROGRESS only. One step of the install, or one line of output from a
+  // child process (docker, or the container engine it drives).
+  //
+  // Deliberately NOT localized: every other streamed operation in this
+  // schema carries raw process output here (docker's own lines, a wrapper's
+  // stdout) rather than translated prose, and this event follows the same
+  // rule for the agent's OWN narration too — "waiting for AdGuard Home to
+  // answer" is a stable English string, and rendering it for the operator is
+  // the client's job, exactly as it already is for every docker/wrapper line
+  // this schema streams elsewhere.
+  string text = 3;
+  // "stdout" | "stderr" for a child process's own output; "agent" for a step
+  // description that did not come from a child process at all (no docker
+  // line ever says "waiting for AdGuard Home to answer" — the agent does).
+  string stream = 4;
+  // STARTED only: the compose project this id resolves to, so the operator
+  // sees what is about to be touched — the same reason ControlService names
+  // its projects.
+  string project = 5;
+  // COMPLETED only: the service as re-read AFTER the install, exactly as
+  // every other destructive streamed verb in this schema reports it.
+  Service service = 6;
+
+  // **The whole reason the phone may be closed mid-install.** The work does
+  // not belong to this stream: `run_install` spawns it into the daemon, and
+  // none of the 219 places that narrate a step treat a failed send as a
+  // reason to stop. What was missing was a way BACK — a client that hung up
+  // had no name for the run it started. This is that name, carried on every
+  // event and therefore already present on STARTED, which is the earliest a
+  // client could decide to leave.
+  string job_id = 7;
+  // Index of this event within the job, counted from 0. A client that comes
+  // back asks `WatchInstall` for everything after the last one it saw, so
+  // reattaching neither loses lines nor repeats them.
+  uint64 sequence = 8;
+}
+
+// ─────────────────────────── Install jobs ───────────────────────────
+
+message WatchInstallRequest {
+  string job_id = 1;
+  // The first index the client still WANTS, not the last one it saw — stated
+  // that way round because the other reading has an off-by-one built into it.
+  // A client that saw nothing sends 0 and gets the run from its first line; one
+  // that saw through sequence 40 sends 41.
+  uint64 from_sequence = 2;
+}
+
+// ─────────────────────────── Job types ───────────────────────────
+
+message WatchJobRequest {
+  string job_id = 1;
+  // The first event still wanted. A client that kept the tail of a run it was
+  // watching passes the next sequence and gets only what it missed.
+  uint64 from_sequence = 2;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+message ListJobsRequest {
+  // UNSPECIFIED lists every kind, which is what a client coming back after a
+  // restart wants: it does not know what it left running.
+  JobKind kind = 1;
+  // Only runs the daemon is working on right now. The listing is otherwise
+  // the host's recent history, kept bounded on the agent's side.
+  bool running_only = 2;
+}
+
+message JobList {
+  repeated Job jobs = 1;
+}
+
+message Job {
+  string job_id = 1;
+  JobKind kind = 2;
+  // What the run is ABOUT, in the words of its own verb: a catalog service id
+  // for install/update/backup/restore/uninstall, a container group name for
+  // the container verbs. One field rather than one per kind, because a client
+  // listing jobs of every kind has to render them in one list.
+  string subject = 3;
+  // Seconds since the epoch, as the HOST sees them. The client renders these
+  // in its own timezone and must not assume the two clocks agree.
+  int64 started_unix = 4;
+  // 0 while the run is still going.
+  int64 finished_unix = 5;
+  JobOutcome outcome = 6;
+  // FAILED only: the same message the stream's error trailer carried.
+  string failure = 7;
+  // How many events the journal holds, so a client can ask for the tail
+  // without reading the whole run.
+  uint64 events = 8;
+}
+
+message JobEvent {
+  string job_id = 1;
+  // Dense and gap-free within one job, starting at 0 — this is what
+  // `WatchJobRequest.from_sequence` counts.
+  uint64 sequence = 2;
+  JobKind kind = 3;
+  JobPhase phase = 4;
+  string text = 5;
+  // "stdout" / "stderr" / "agent", exactly as the typed stream said it.
+  string stream = 6;
+  string subject = 7;
+}
+
+enum JobKind {
+  JOB_KIND_UNSPECIFIED = 0;
+  JOB_KIND_INSTALL = 1;
+  JOB_KIND_UPDATE = 2;
+  JOB_KIND_BACKUP = 3;
+  JOB_KIND_RESTORE = 4;
+  JOB_KIND_UNINSTALL = 5;
+  JOB_KIND_SERVICE_CONTROL = 6;
+  JOB_KIND_CONTAINER_UPDATE = 7;
+  JOB_KIND_CONTAINER_BACKUP = 8;
+  JOB_KIND_CONTAINER_REMOVAL = 9;
+  JOB_KIND_CONTAINER_CONTROL = 10;
+  // Fetching a model onto the engine. Its own kind rather than an update,
+  // because it is the one long run on this host that nobody triggered from a
+  // service card — it belongs to a model, and the screen that lists them is
+  // where a returning client looks for it.
+  JOB_KIND_MODEL_PULL = 11;
+  // Running the host's intrusion defence — start, stop, restart, update,
+  // install or remove. Its own kind rather than SERVICE_CONTROL, because
+  // CrowdSec is not a catalog service and a returning client looks for it on
+  // the security card rather than under a service id.
+  JOB_KIND_SECURITY_CONTROL = 12;
+}
+
+enum JobPhase {
+  JOB_PHASE_UNSPECIFIED = 0;
+  JOB_PHASE_STARTED = 1;
+  JOB_PHASE_PROGRESS = 2;
+  // The work finished and its own verb has said what it produced. The typed
+  // payload is NOT repeated here: a returning client re-reads live state.
+  JOB_PHASE_COMPLETED = 3;
+  JOB_PHASE_FAILED = 4;
+}
+
+// Four answers, for every kind of run.
+//
+// **There used to be a second copy of this enum** (`InstallJobOutcome`, beside
+// an install-only `ListInstallJobs`) saying the same four things about
+// installs alone. It is gone, and so is that verb: `Job` carries every field
+// `InstallJob` carried, and `ListJobs` already reads the install slice's own
+// journals, so the pair was a second answer to one question rather than a
+// second question. Removing them cannot reach a host: an agent already
+// deployed keeps its own compiled schema, and a client that no longer asks
+// never sees the reply.
+enum JobOutcome {
+  JOB_OUTCOME_UNSPECIFIED = 0;
+  // The daemon is still working. A fact about the JOURNAL, not about a live
+  // stream: a run whose client hung up long ago is running exactly as much as
+  // one being watched.
+  JOB_OUTCOME_RUNNING = 1;
+  JOB_OUTCOME_SUCCEEDED = 2;
+  JOB_OUTCOME_FAILED = 3;
+  // The daemon died mid-run — the journal has no ending and no process is
+  // writing to it any more. Distinct from FAILED because nothing is known
+  // about what the run left behind.
+  JOB_OUTCOME_ABANDONED = 4;
+  // Somebody asked for it to stop, and it stopped. Distinct from FAILED
+  // because nothing went wrong: a screen that renders this as a failure sends
+  // the person who pressed Cancel looking for a cause.
+  JOB_OUTCOME_CANCELLED = 5;
+}
+
+// ─────────────────────────── Mailbox types ───────────────────────────
+
+message ListMailboxesRequest {}
+
+message MailboxList {
+  repeated Mailbox mailboxes = 1;
+}
+
+message Mailbox {
+  // Exactly as the engine printed it.
+  string address = 1;
+  // Everything the listing printed after the address (usage / quota),
+  // verbatim; empty when the row carried nothing else — which is what a
+  // just-created mailbox looks like, because its maildir does not exist yet.
+  string detail = 2;
+  // Whether the agent would accept this address as INPUT. A mailbox created
+  // outside the app (a local part the validator rejects) exists and must be
+  // listed, but acting on it would be refused — the client disables its buttons
+  // instead of offering an action that comes back "invalid address".
+  bool manageable = 3;
+}
+
+message CreateMailboxRequest {
+  string address = 1;
+  // The password travels in the request body over the SSH tunnel and goes
+  // straight to the engine's STDIN — never into argv, where /proc shows it to
+  // every account on the box. Nothing on the agent side logs this message, and
+  // the JSON debug codec must not be pointed at it.
+  string password = 2;
+}
+
+message DeleteMailboxRequest {
+  string address = 1;
+}
+
+message SetMailboxPasswordRequest {
+  string address = 1;
+  string password = 2;   // stdin, as above
+}
+
+// ─────────────────────────── DKIM types ───────────────────────────
+
+message GetDkimRecordsRequest {}
+
+message DkimRecord {
+  // "dkim._domainkey.example.com" — already the full DNS record name, exactly
+  // as the wrapper prints it (docker-mailserver's non-default "dkim" selector
+  // baked in, not "mail").
+  string name = 1;
+  // The TXT record's value ("v=DKIM1;k=rsa;t=s;p=…"), verbatim from the
+  // wrapper.
+  string value = 2;
+}
+
+message DkimRecordList {
+  // One entry per mail domain the installed engine has minted a key for. Empty
+  // when the engine has none yet (a config not yet read, or install-time
+  // generation still pending) — not an error, the same rule empty backup and
+  // mailbox listings follow.
+  repeated DkimRecord records = 1;
+}
+
+// ─────────────────────────── Pairing types ───────────────────────────
+
+message PairRequest {
+  // The pairing code shown by the agent (out of band) that authorizes this
+  // device to enroll.
+  string code = 1;
+  // The device's public key; the tunnel already authenticates it, but the agent
+  // records it so devices can be listed and revoked.
+  string device_public_key = 2;
+  string label = 3;          // "Danyil's iPhone"
+  // **This installation of the app, which is not the same thing as the key.**
+  // The key above belongs to the DEPLOYMENT and travels with it: a server moved
+  // to a second phone with Export carries it, so both phones were one row and
+  // "sign this device out" would have signed out both. A device_uid is minted
+  // per app installation, stays out of the transfer file, and is what the row is
+  // keyed by when it is present. Empty from an older client, and then the key
+  // hash keys the row exactly as before.
+  string device_uid = 4;
+}
+
+message PairResponse {
+  Device device = 1;
+}
+
+message ListDevicesRequest {}
+
+message DeviceList {
+  repeated Device devices = 1;
+}
+
+message Device {
+  string id = 1;
+  string public_key = 2;
+  string label = 3;
+  repeated string scopes = 4;   // "read", "manage", … (Phase 1 issues "read")
+  int64 paired_at = 5;          // Unix ms
+  // See PairRequest.device_uid. Empty on rows written before it existed.
+  string device_uid = 6;
+  // When this device's session runs out (Unix ms). 0 means never, which is the
+  // default and today's behaviour. Derived from paired_at plus the deployment's
+  // SessionPolicy — stored rather than computed so a policy change is visible
+  // in the list as the dates it produced.
+  int64 expires_at = 7;
+  // The last call the agent answered for this device (Unix ms), 0 if it has not
+  // called since the agent learned to record it.
+  int64 last_seen_at = 8;
+}
+
+message RevokeRequest {
+  string device_id = 1;
+}
+
+message RevokeResponse {
+  bool revoked = 1;
+}
+
+message GetSessionPolicyRequest {}
+
+message SetSessionPolicyRequest {
+  // 0, 1, 3, 6 or 12. Anything else is refused rather than rounded: a window
+  // the owner did not choose is a sign-out at a date nobody expects.
+  int32 auto_logout_months = 1;
+}
+
+// How long a device may go on using this server before it has to prove itself
+// again — chosen once for the deployment, not per device.
+//
+// **What it enforces and what it cannot.** With a window set, the agent refuses
+// every verb to a device whose session has run out, AND to a caller that does
+// not say which device it is (an app too old to send its id). What it does not
+// do is close the SSH transport: the key in authorized_keys keeps working, the
+// same caveat Revoke has always carried. The app's own copy of the passwords is
+// wiped on the refusal, so what expires is access, not merely a screen.
+message SessionPolicy {
+  int32 auto_logout_months = 1;   // 0 = never
+  // The number of paired devices the current window applies to, so a client can
+  // say "this signs out 3 devices" before it writes.
+  int32 device_count = 2;
+}
+
+// ─────────────────────────── Vault types ───────────────────────────
+
+message GetVaultRequest {}
+
+message VaultEntry {
+  // Stable across devices and across re-installs: "<host>|<title>", the key the
+  // app already used locally. NOT a uuid — two devices that never met must
+  // arrive at the same id for the same account, or a sync produces duplicates
+  // rather than a merge.
+  string id = 1;
+  // Which machine of the deployment the account belongs to: "single", "vps",
+  // "home" or a node uuid. Same vocabulary the install report uses.
+  string host = 2;
+  string title = 3;      // "Vaultwarden", "AdGuard Home"
+  string website = 4;
+  string login = 5;
+  string password = 6;
+  string token = 7;      // admin token, when the service has one
+  int64 updated_at = 8;  // Unix ms; the merge rule's only input
+  // The device_uid that last wrote it, so the app can say "changed on the
+  // iPhone" instead of showing a value that appeared from nowhere. The agent
+  // writing on its own behalf (a generated install password, a mailbox password
+  // it just set) records "agent".
+  string updated_by = 9;
+  bool deleted = 10;     // tombstone
+  // What this row IS, when it is not an account somebody logs in with:
+  // "<catalog service id>/<provider id>", e.g. "litellm/openai".
+  //
+  // **Empty for every row that existed before this field, and that is the
+  // whole design.** A vault row used to be one thing — a login for a person —
+  // and the agent never looked at its content. An API key for somebody else's
+  // model is a secret of the same kind (it belongs to the deployment, two
+  // phones must see the same one, and it must not live in a single Keychain)
+  // but it is CONSUMED BY A SERVICE rather than typed into a login form: the
+  // agent renders it into a root-only env file and restarts the container.
+  //
+  // It is a field rather than a convention on `title` because the agent has
+  // to recognise these rows to act on them, and a display name is the worst
+  // possible key — it is user-visible, editable and translated. What the
+  // agent will accept here is an allowlist on its own side (see
+  // `install::llm_keys`); an unknown value is ignored, never guessed at.
+  string service_secret = 11;
+}
+
+message VaultSnapshot {
+  // Tombstones INCLUDED: a client that filtered them out on the wire could not
+  // tell "deleted elsewhere" from "not yet synced" and would push the entry
+  // back. Clients hide them; the wire carries them.
+  repeated VaultEntry entries = 1;
+  // Bumped on every write. A client that holds this number can ask whether
+  // anything changed without reading the whole vault back.
+  int64 revision = 2;
+}
+
+message PutVaultEntriesRequest {
+  repeated VaultEntry entries = 1;
+}
+
+message DeleteVaultEntryRequest {
+  string id = 1;
+  // Who deleted it, for the same reason VaultEntry.updated_by exists.
+  string device_uid = 2;
+}
+
+
+// ── The models the local engine runs ────────────────────────────────────────
+//
+// **The engine installs EMPTY, and until this existed nothing in the app could
+// change that.** Fetching no model at install is a deliberate decision (owner,
+// phase 1: a useful model is tens of gigabytes and an install must not spend
+// somebody's disk on a choice they were never shown) — but the consequence was
+// that five services on the AI shelf opened with an empty picker and the only
+// way forward began with ssh. This is that way forward.
+service Models {
+  // What the engine has, what it weighs, and what is left on the disk it
+  // lives on. One verb rather than two: the free space is the number that
+  // decides whether the next pull is a good idea, so a screen that showed the
+  // list without it would be a screen that has to ask twice.
+  rpc ListModels(ListModelsRequest) returns (ModelList);
+  // Fetch one, by the name the registry knows it by.
+  //
+  // **A JOB, not a stream that owns the work.** A model is minutes to hours on
+  // a domestic connection, and the phone in somebody's hand is the least
+  // reliable part of that: the run is registered in `jobs.rs` and every event
+  // carries its id, so a client that closed comes back with `WatchJob` and
+  // finds the run still going. The stream is the report, never the work.
+  rpc PullModel(PullModelRequest) returns (stream ModelPullEvent);
+  // Remove one. Answers with the re-read listing, the rule every mutating verb
+  // on these routes follows.
+  rpc DeleteModel(DeleteModelRequest) returns (ModelList);
+}
+
+message ListModelsRequest {}
+
+message Model {
+  // The name the engine and the registry both use, tag included:
+  // "llama3.2:3b". This is the identity — there is no separate id.
+  string name = 1;
+  uint64 size_bytes = 2;
+  // When the engine last wrote it. Seconds since the epoch, 0 when the engine
+  // did not say.
+  int64 modified_unix = 3;
+  // What the engine reports about the weights themselves. Both are free text
+  // from the engine and may be empty: they are shown, never parsed.
+  string parameter_size = 4;
+  string quantization = 5;
+}
+
+message ModelList {
+  repeated Model models = 1;
+  // **False when the engine is not on this host at all**, which is a different
+  // answer from "no models" and has to look different on the screen. An empty
+  // list under a present engine is an invitation; an empty list under an
+  // absent one is a service to install first.
+  bool engine_present = 2;
+  // The directory the weights land in, and what the filesystem holding it has
+  // left. Free space is what a pull is refused against, so it is reported
+  // beside the list rather than guessed at by the caller.
+  string path = 3;
+  uint64 disk_free_bytes = 4;
+  uint64 disk_total_bytes = 5;
+}
+
+message PullModelRequest {
+  string name = 1;
+}
+
+message ModelPullEvent {
+  ServiceOperationPhase phase = 1;
+  string text = 2;
+  // **How big it turns out to be, learned from the engine's first progress
+  // report rather than guessed before one.** There is no way to ask what a
+  // model weighs without starting to fetch it, so the free-space refusal
+  // happens HERE — at the first event that names a total, before the bytes
+  // land — rather than against a number nobody could know.
+  uint64 total_bytes = 3;
+  uint64 completed_bytes = 4;
+  // Set on every event, and the same id `WatchJob` takes. Empty on an older
+  // host that keeps no journal for this operation.
+  string job_id = 5;
+  // COMPLETED only: the re-read listing, so the screen does not have to ask.
+  ModelList list = 6;
+}
+
+message DeleteModelRequest {
+  string name = 1;
+}
+
+// ─────────────────────────────── Mods ───────────────────────────────
+//
+// The mod catalogue for the Minecraft servers this app installs, and the
+// files an owner sends up by hand.
+//
+// **The SEARCH runs on the server, not on the phone** (owner, 2026-09-08:
+// "давай вариант б"). The app talks to the machines it owns over SSH and to
+// nothing else — that is a property of this product, written down in the
+// README — and a phone querying api.modrinth.com directly would quietly end
+// it. The agent already reaches the internet for the things a server must do
+// itself (dynamic DNS, image pulls), and it is the side that downloads the
+// mods anyway, so asking it to run the query changes nothing about who talks
+// to whom.
+//
+// **Nothing here takes a PATH from the caller.** The directories are derived
+// on the host from the compose project's own `ConfigFiles`, the same source
+// discovery reads. A client that could name the directory could name any
+// directory, and this verb writes files.
+//
+// Applying a picked list is NOT here on purpose: the list is a deployment
+// SETTING (`minecraft_java_mods`), so it travels the install path with every
+// other setting and lands as `MODRINTH_PROJECTS` in the compose file. An
+// uploaded file needs no such round trip — the image synchronises the drop-in
+// directory into the server at every start.
+service Mods {
+  // Search Modrinth from the host. Results are already filtered to what the
+  // server can actually load: its game version and its loader.
+  rpc SearchMods(SearchModsRequest) returns (ModSearchResult);
+  // The files of one project that fit this server, newest first — what the
+  // app pins an entry to. Asked for the ONE project somebody is adding
+  // rather than for every row of a search: a version per result would be ten
+  // requests to answer a question nobody asked yet.
+  rpc ModVersions(ModVersionsRequest) returns (ModVersionList);
+  // What is in the drop-in directories: the jars the owner sent up, with
+  // their sizes, so a screen can show them and offer to remove one.
+  rpc ListModFiles(ListModFilesRequest) returns (ModFileList);
+  // Send one jar up. Unary with the bytes inline: these are megabytes, not
+  // gigabytes, and a resumable upload for a file that is re-sendable in
+  // seconds would be machinery with nothing to do.
+  rpc UploadModFile(UploadModFileRequest) returns (ModFileList);
+  rpc DeleteModFile(DeleteModFileRequest) returns (ModFileList);
+}
+
+// Which of the two drop-in directories a file belongs in. The answer is the
+// server's TYPE — Fabric and Forge load `mods`, Paper loads `plugins` — and
+// the TYPE can change on a server that already exists, which is why both
+// directories always exist and a file names the one it is for.
+enum ModSlot {
+  MOD_SLOT_UNSPECIFIED = 0;
+  MOD_SLOT_MODS = 1;
+  MOD_SLOT_PLUGINS = 2;
+}
+
+message SearchModsRequest {
+  // Catalog id of the server being configured; only "minecraft-java" today.
+  // Named rather than assumed so a second engine does not need a new verb.
+  string service_id = 1;
+  string query = 2;
+  // Game version, e.g. "1.21.4". Empty means the caller does not know it yet
+  // — the host then answers without the version facet rather than guessing
+  // one, and says so in `filtered_by_version`.
+  string game_version = 3;
+  // Loader, lower case, as Modrinth spells it: "fabric", "forge",
+  // "neoforge", "quilt", "paper". Derived by the caller from the server's
+  // TYPE; empty is refused, because an unfiltered list is a list of things
+  // that mostly cannot be installed.
+  string loader = 4;
+  // 0 means the host's own default (10). Capped at 50: a phone screen is not
+  // a catalogue, and Modrinth asks for its rate limit to be respected.
+  uint32 limit = 5;
+  uint32 offset = 6;
+}
+
+message ModSearchResult {
+  repeated ModProject projects = 1;
+  // Total matches Modrinth reported, so a screen can say whether there is
+  // more rather than guessing from a full page.
+  uint32 total = 2;
+  // False when `game_version` was empty: the rows may then include things
+  // this server cannot load, and the screen has to say so.
+  bool filtered_by_version = 3;
+}
+
+message ModProject {
+  // The slug is what goes into `MODRINTH_PROJECTS`; the id is what the
+  // version lookup takes. Both, because neither is derivable from the other.
+  string slug = 1;
+  string project_id = 2;
+  string title = 3;
+  string description = 4;
+  uint64 downloads = 5;
+  // "mod", "plugin", "modpack", "shader", "resourcepack". Carried because a
+  // modpack is not installable this way and the screen has to say why.
+  string project_type = 6;
+  // Licence spdx id as Modrinth states it, e.g. "MIT", "LGPL-3.0-only".
+  // Shown rather than hidden: somebody putting software on their own server
+  // is entitled to know what it is before it is downloaded.
+  string license = 7;
+  string author = 8;
+}
+
+message ModVersionsRequest {
+  string service_id = 1;
+  // Slug or project id — Modrinth takes either.
+  string project = 2;
+  string game_version = 3;
+  string loader = 4;
+}
+
+message ModVersionList {
+  repeated ModVersion versions = 1;
+}
+
+message ModVersion {
+  // What the app writes after the colon in `slug:version_id`.
+  string version_id = 1;
+  // Human-facing: "0.119.2+1.21.4".
+  string version_number = 2;
+  string name = 3;
+  // "release", "beta", "alpha". A screen should default to release and say
+  // when it is offering anything else.
+  string version_type = 4;
+  // RFC3339, as Modrinth sends it.
+  string published_at = 5;
+  repeated string game_versions = 6;
+  repeated string loaders = 7;
+}
+
+message ListModFilesRequest {
+  string service_id = 1;
+}
+
+message ModFileList {
+  repeated ModFile files = 1;
+  // Free space on the filesystem holding the directories, so a screen can
+  // refuse a 300 MB pack before the bytes are sent rather than after.
+  uint64 disk_free_bytes = 2;
+}
+
+message ModFile {
+  string name = 1;
+  ModSlot slot = 2;
+  uint64 size_bytes = 3;
+  int64 modified_unix = 4;
+}
+
+message UploadModFileRequest {
+  string service_id = 1;
+  ModSlot slot = 2;
+  // Base name only. A separator, a leading dot or anything but a `.jar` is
+  // refused rather than sanitised: a file whose name was quietly changed is
+  // a file the owner cannot find again, and quietly accepting `../` is how
+  // an upload verb becomes a write-anywhere verb.
+  string name = 3;
+  bytes content = 4;
+}
+
+message DeleteModFileRequest {
+  string service_id = 1;
+  ModSlot slot = 2;
+  string name = 3;
+}

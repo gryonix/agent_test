@@ -1,0 +1,18 @@
+
+log "ОТЧЁТ"
+echo "WireGuard:   /etc/wireguard/wg0.conf — сервер туннеля, порт UDP/51820"
+echo "Firewall:    /etc/nftables.conf — DNAT портов 25, 80, 443, 465, 993, 2222, 4190 -> 10.8.0.2"
+echo "Форвардинг:  /etc/sysctl.d/99-gryonixnexus-forwarding.conf"
+echo
+echo "Статус сервисов:"
+for s in nftables wg-quick@wg0; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Туннель (рукопожатие появится после setup-home-server.sh на домашнем сервере):"
+wg show wg0 || true
+echo
+echo "Дальше:"
+echo "  1) Запустите setup-home-server.sh на ДОМАШНЕМ сервере."
+echo "  2) PTR у провайдера VPS: публичный IP -> relay.example.com."
+

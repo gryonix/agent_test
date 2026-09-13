@@ -1,0 +1,4 @@
+hostname=start.other-company.net
+upstreamPort=8093
+adminGuard=true
+upstreamHTTPS=false

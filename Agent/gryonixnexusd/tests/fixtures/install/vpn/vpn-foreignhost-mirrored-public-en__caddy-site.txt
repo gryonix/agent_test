@@ -1,0 +1,7 @@
+vpn.other-company.net {
+    # gryonixnexus: vpn
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:51900 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}

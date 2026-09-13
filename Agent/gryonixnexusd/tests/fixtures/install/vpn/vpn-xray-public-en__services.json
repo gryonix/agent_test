@@ -1,0 +1,1 @@
+{"services":[{"id":"xray","name":"VLESS / Reality","endpoint":"vpn.example.com:8443 · TCP","host":"vpn.example.com","port":"8443"}]}

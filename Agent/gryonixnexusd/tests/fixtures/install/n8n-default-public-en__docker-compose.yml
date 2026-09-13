@@ -1,0 +1,53 @@
+services:
+  n8n:
+    image: n8nio/n8n:2.37.10
+    container_name: n8n
+    restart: unless-stopped
+    depends_on:
+      - database
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: database
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${DB_PASSWORD}
+      # Both halves of "which address is this?": the first is what
+      # n8n checks incoming requests against, the second is what it
+      # PRINTS into every webhook URL and every editor link.
+      N8N_HOST: flows.example.com
+      WEBHOOK_URL: "https://flows.example.com/"
+      N8N_EDITOR_BASE_URL: "https://flows.example.com/"
+      N8N_PROTOCOL: https
+      N8N_PORT: 5678
+      # Caddy is the one hop in front. Without this n8n reads the
+      # proxy's own address as the client's, which turns every
+      # rate limit and every log line into a statement about
+      # 127.0.0.1.
+      N8N_PROXY_HOPS: 1
+      # Workflow code runs in the task runner rather than in the
+      # main process — the supported arrangement from 2.x, and the
+      # one that keeps a runaway Code node from taking the editor
+      # down with it.
+      N8N_RUNNERS_ENABLED: "true"
+      # Nothing about this deployment is reported anywhere. The
+      # whole point of the catalog is a server that is the owner's.
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_HIRING_BANNER_ENABLED: "false"
+      # Schedule triggers ("every day at 9") are read in this zone.
+      # UTC rather than the server's, which on a rented VPS is
+      # whatever the provider set: a fixed, stated zone is one the
+      # owner can convert from, and it is changed in the workflow.
+      GENERIC_TIMEZONE: UTC
+    volumes:
+      - /opt/n8n/data:/home/node/.n8n
+    ports:
+      - "127.0.0.1:8099:5678"
+  database:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - /opt/n8n/postgres:/var/lib/postgresql/data

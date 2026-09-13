@@ -1,0 +1,21 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo "Backup passphrase (keep it — encrypted backups need it): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "AdGuard Home: https://dns.example.com"
+echo "  Administrator: admin"
+echo "  Password (generated on the server): $(grep '^ADGUARD_ADMIN_PASSWORD=' /opt/adguardhome/.env | cut -d= -f2-)"
+echo "  DNS-over-HTTPS for your devices: https://dns.example.com/dns-query"
+echo "  Plain DNS on port 53 answers on this server only: a resolver open to the internet is abused for amplification attacks within days."
+

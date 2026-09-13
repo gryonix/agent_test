@@ -1,0 +1,28 @@
+services:
+  searxng:
+    image: searxng/searxng:2026.9.7-3e454637f
+    container_name: searxng
+    restart: unless-stopped
+    environment:
+      # Signs the form state their pages carry. Generated on the
+      # server; regenerating it on every start would invalidate
+      # every open tab, which is why it lives in `.env`.
+      SEARXNG_SECRET: ${SEARXNG_SECRET}
+      SEARXNG_PORT: 8080
+      # Their default is the rate limiter OFF, and this deployment
+      # is the case it was written for: the port answers on
+      # loopback only, so the callers are the containers on this
+      # host. A limiter here would also need the datastore it
+      # counts in, which is a second container for a queue nobody
+      # outside can join.
+      SEARXNG_LIMITER: "false"
+    volumes:
+      # Their entrypoint writes a settings file here when it finds
+      # none. The install below always leaves one, so what runs is
+      # always the file this repository generated.
+      - /opt/searxng/config:/etc/searxng
+      - /opt/searxng/cache:/var/cache/searxng
+    ports:
+      # Loopback. The neighbours reach it through
+      # host.docker.internal; nothing publishes it.
+      - "127.0.0.1:8101:8080"

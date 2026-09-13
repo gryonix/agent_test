@@ -1,0 +1,45 @@
+services:
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:2026.9.2
+    container_name: openclaw
+    restart: unless-stopped
+    # PID 1 that reaps: this process spawns browsers and helpers,
+    # and upstream's own compose asks for the same.
+    init: true
+    # The engine and the gateway are separate compose projects
+    # reached over the HOST's loopback, so this name has to
+    # resolve; docker does not add it on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Upstream's own posture, kept rather than trimmed: a service
+    # that talks to strangers' messengers has no use for raw
+    # sockets or for interface administration inside its namespace.
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Guards the gateway and its web UI. Generated on the server
+      # — see the report for where to read it.
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_GATEWAY_PORT: "18789"
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+    volumes:
+      # One mount, because the workspace above lives inside the
+      # state directory: two mounts of nested paths would be two
+      # things to keep in step for no second lifetime.
+      - /srv/openclaw/state:/home/node/.openclaw
+    ports:
+      - "127.0.0.1:8102:18789"
+    command:
+      - node
+      - dist/index.js
+      - gateway
+      - --bind
+      - lan
+      - --port
+      - "18789"

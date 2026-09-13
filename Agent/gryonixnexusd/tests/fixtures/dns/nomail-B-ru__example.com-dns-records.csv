@@ -1,0 +1,4 @@
+type,name,value,ttl,priority
+A,relay.example.com,203.0.113.10,3600,
+A,cloud.example.com,203.0.113.10,3600,
+A,vault.example.com,203.0.113.10,3600,

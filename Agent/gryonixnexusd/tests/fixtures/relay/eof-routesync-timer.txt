@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic gryonixNexus relay route sync
+
+[Timer]
+# Docker bridges come and go as services are installed/removed; this
+# is the only thing that notices without a re-run of setup.
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

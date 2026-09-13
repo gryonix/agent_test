@@ -1,0 +1,53 @@
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      # Explicit, NOT upstream's own MYSQL_RANDOM_ROOT_PASSWORD:
+      # the shared backup wrapper always dumps as root, reading
+      # MYSQL_ROOT_PASSWORD out of the container's OWN
+      # environment — a randomized-and-discarded root password
+      # would make this service's own backups impossible.
+      MYSQL_ROOT_PASSWORD: ${PASSBOLT_DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: passbolt
+      MYSQL_USER: passbolt
+      MYSQL_PASSWORD: ${PASSBOLT_DB_PASSWORD}
+    volumes:
+      - /srv/passbolt/db:/var/lib/mysql
+  passbolt:
+    image: passbolt/passbolt:5.14.3-1-ce
+    container_name: passbolt
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      APP_FULL_BASE_URL: https://vault.example.com
+      DATASOURCES_DEFAULT_HOST: db
+      DATASOURCES_DEFAULT_USERNAME: passbolt
+      DATASOURCES_DEFAULT_PASSWORD: ${PASSBOLT_DB_PASSWORD}
+      DATASOURCES_DEFAULT_DATABASE: passbolt
+    volumes:
+      - /srv/passbolt/secrets/gpg:/etc/passbolt/gpg
+      - /srv/passbolt/secrets/jwt:/etc/passbolt/jwt
+    # `depends_on` only waits for the db CONTAINER to start, not
+    # for MariaDB to accept connections — this is upstream's own
+    # wait, kept verbatim, ahead of the entrypoint that generates
+    # the GPG keypair and installs the schema.
+    command:
+      [
+        "/usr/bin/wait-for.sh",
+        "-t",
+        "0",
+        "db:3306",
+        "--",
+        "/docker-entrypoint.sh",
+      ]
+    ports:
+      # Caddy terminates TLS and speaks plain HTTP to this port —
+      # the community has documented this exact shape (nginx or
+      # Caddy in front on 80, Passbolt never sees the TLS layer);
+      # unlike mailcow's nginx, nothing here redirects 80 to 443
+      # on its own. Port 443 is never published: this catalog's
+      # own self-signed listener has no certificate anyone trusts
+      # and Caddy already owns the public 443.
+      - "127.0.0.1:8090:80"

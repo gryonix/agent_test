@@ -1,0 +1,4 @@
+hostname=psono.other-company.net
+upstreamPort=8089
+adminGuard=true
+upstreamHTTPS=false

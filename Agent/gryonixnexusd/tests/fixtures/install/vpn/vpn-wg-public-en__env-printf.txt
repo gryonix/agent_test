@@ -1,0 +1,6 @@
+  printf 'ADMIN_USER=%s\n' 'admin'
+  printf 'ADMIN_PASSWORD=%s\n' __PW__
+  printf 'WG_HOST=%s\n' "vpn.example.com"
+  printf 'WG_PORT=%s\n' "51821"
+  printf 'WG_SUBNET=%s\n' "10.9.0.0/24"
+} > /opt/gryonix-vpn-panel/.env

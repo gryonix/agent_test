@@ -1,0 +1,566 @@
+# gryonixnexusd — the control-plane agent. Builds to a single static binary
+# (aarch64 + x86_64 via musl) that ships as /usr/local/bin/gryonixnexusd and runs
+# under systemd (gryonixnexusd.service). Built ON THE SERVER (or cross-compiled in
+# CI), like gryonix-vpn-panel:local.
+#
+# Dependency versions are pinned for real when the agent is first built on a
+# target host and Cargo.lock is committed.
+[package]
+name = "gryonixnexusd"
+# The bootstrap decides whether to rebuild by comparing this against
+# `gryonixnexusd version` on the host, so it is the upgrade signal: a change to
+# what the binary expects from the host has to bump it, or the hosts that need
+# the change keep the old build forever. 0.0.2 moves state.db from
+# /var/lib/gryonixnexus into its own agent/ subdirectory (the parent is shared
+# with the setup scripts) — the bootstrap migrates the file, and only a rebuild
+# makes the daemon look for it in the new place. 0.0.3 adds the ServiceStatus
+# and ControlService RPCs: a host left on 0.0.2 answers them with a 404 the app
+# reads as a dead route, so the bump is what carries the new API to the fleet.
+# 0.0.4 asks the KERNEL for the hostname before /etc/hostname — cloud images
+# ship that file empty, and a host left on 0.0.3 keeps reporting no name at all.
+# 0.0.5 makes a discovery pass PRUNE services that are gone: without it GetState
+# reported uninstalled services as running for ever, and only a rebuilt agent
+# stops writing that state. 0.0.6 stops `bridge` from shutting the socket's write
+# side down when its stdin ends — that made the agent abandon the response to any
+# call it could not answer instantly. 0.0.7 adds MetricsHistory (the collector's
+# CSV buckets served through the API instead of an SSH `cat`) and the four Mail
+# RPCs (docker-mailserver mailboxes); a host left on 0.0.6 answers both with a
+# 404 the app reads as a dead route, so the bump is what carries them to the
+# fleet. 0.0.8 adds the four Backup RPCs (list / estimate / run / delete),
+# which drive the deployment's own root-owned backup wrapper through typed calls
+# instead of a privileged command line composed in the app; a host left on 0.0.7
+# answers them with a 404 the app reads as a dead route, so the bump is what
+# carries them to the fleet. It also teaches `discover` about jellyfin — a
+# catalog service the agent did not know, and therefore refused to manage.
+# 0.0.9 makes ENCRYPTED backups work at all: the unit's ProtectHome left the
+# wrapper's children with a read-only $HOME, so `gpg --symmetric` could not
+# create its own directory and every encrypted run died — which is the DEFAULT
+# for the password store, the mail stack and the VPN panel. A host left on 0.0.8
+# answers those runs with a failure, not a 404, so nothing about it looks like a
+# missing route: the bump is the only thing that replaces the binary. It also
+# stops the wrapper's in-flight `.work-XXXXXX` scratch directory from being
+# listed as if it were a backup, and teaches `discover` about photoprism and
+# adguard-home. 0.0.10 teaches it about seafile, which the round that added the
+# other two missed: the app installs the service and maps it, so its card drew
+# agent-backed buttons whose calls the agent answered "unknown service" — and
+# nothing failed in either test suite, because the Rust test iterates the Rust
+# table and the Swift test checks the Swift mapping, so a service absent from
+# one of them is absent from its own check too. 0.0.11 adds the four Update
+# RPCs (check / run / get-policy / set-schedule), driving the deployment's own
+# root-owned update-ctl.sh the same way 0.0.8 taught the agent to drive
+# backup-ctl.sh; a host left on 0.0.10 answers them with a 404 the app reads as
+# a dead route, so the bump carries them to the fleet. 0.0.12 fixes
+# SetUpdateSchedule itself: the unit's ProtectSystem=full left /etc read-only,
+# so the wrapper's `install -d -m 755 /etc/gryonixnexus` died with "Read-only
+# file system" on every call — the same class of mistake as 0.0.9's ProtectHome,
+# found live the same way. The bootstrap rewrites gryonixnexusd.service on every
+# run regardless of version, but `systemctl enable --now` does not restart an
+# already-running unit, so a host already on 0.0.11 would get the corrected
+# unit file on disk while the live process kept running under the OLD, still
+# read-only namespace forever. A bump is what forces the stop/restart that
+# actually applies it. 0.0.13 adds the Restore RPC, driving the deployment's
+# own root-owned /opt/gryonixnexus-restore.sh the same way earlier bumps taught
+# the agent to drive backup-ctl.sh and update-ctl.sh; a host left on 0.0.12
+# answers it with a 404 the app reads as a dead route. It reuses backup.rs's
+# wrapper_home fix for the same reason a restore of an encrypted archive calls
+# gpg too — skipping it would fail every encrypted restore exactly as 0.0.9
+# failed every encrypted backup before it existed. 0.0.14 adds the Dkim RPC
+# (GetDkimRecords), calling whichever of the three per-engine DKIM-dump
+# wrappers is on the host — a host left on 0.0.13 answers it with a 404 the
+# same way. 0.0.15 adds the Lockdown RPCs (get / set), driving the deployment's
+# own root-owned admin-lockdown.sh the same way earlier bumps taught the agent
+# to drive backup-ctl.sh and update-ctl.sh; a host left on 0.0.14 answers them
+# with a 404 the app reads as a dead route. Unlike backups and restores this
+# wrapper needs neither a writable HOME nor a passphrase on stdin, so both
+# RPCs stay unary — but it turned out NOT to escape 0.0.12's fix class after
+# all (see 0.0.16). 0.0.16 fixes SetLockdown itself: it writes
+# /etc/caddy/gryonixnexus-admin-guard, a THIRD path under ProtectSystem=full's
+# read-only /etc that 0.0.12's ReadWritePaths did not cover (only
+# /etc/gryonixnexus and /etc/systemd/system) — found live 2026-08-09 on
+# lab-home the same way 0.0.12 was, "Read-only file system" on the wrapper's
+# very first write. The unit gained /etc/caddy in ReadWritePaths, and — same
+# reasoning as 0.0.12 — the bump is what forces the restart that actually
+# applies a unit-file-only fix to an already-running agent. 0.0.17 adds the
+# Install RPC (InstallService), streaming — the first slice of Ф4's
+# imperative half, AdGuard Home only: creates its directories, compose file
+# and secrets, runs docker directly, waits for its own install API, POSTs the
+# generated admin password, patches the DoH-insecure key and writes/reloads
+# its Caddy site — no generated bash script, no SSH session. A host left on
+# 0.0.16 answers it with a 404 the app reads as a dead route. Every other
+# real catalog id besides adguard-home resolves `failed_precondition` (a real
+# id, no executor for it in this build yet) rather than `not_found` — see
+# install::execute's module doc. Writes stay inside paths 0.0.12/0.0.16
+# already carved out of ProtectSystem=full's read-only /etc (/etc/caddy) plus
+# /opt, which was never restricted, so the unit file itself is unchanged.
+#
+# 0.0.18 — Ф4 срез 4.3: Install/InstallService gains two more executors,
+# Jellyfin and Vaultwarden (the other two single-container services with no
+# database of their own). The RPC itself is unchanged, so this is not a wire
+# change — but the set of ids it ACCEPTS is, and a host left on 0.0.17 answers
+# `failed_precondition` ("no installer for this in this build") for both,
+# which is exactly the answer a client cannot tell apart from a service that
+# will never be supported. The bump is the only mechanism that carries the
+# widened gate to hosts that already run the agent. Vaultwarden additionally
+# rewrites <data>/config.json (0600) when the app's signups/domain settings
+# disagree with what its /admin panel stored; both services stay inside /opt
+# and /etc/caddy, so the unit file is unchanged again.
+#
+# 0.0.19 — Ф4 срез 4.4: PhotoPrism joins the executor. First MULTI-container
+# service in this port (server plus its own MariaDB) and the first with three
+# independent generated secrets. Same reason for the bump as 0.0.18: the RPC
+# is unchanged, the set of ids it ACCEPTS is not, and a host left behind
+# answers `failed_precondition` for photoprism — indistinguishable from a
+# service that will never be supported. Writes stay inside /opt and
+# /etc/caddy, so the unit file is unchanged again.
+#
+# 0.0.20 — Ф4 срез 4.5: Immich joins the executor. Four containers (server,
+# machine learning, valkey, postgres) and one generated secret shared by the
+# server and postgres — two ends of the same credential. Same reason for the
+# bump as 0.0.18/0.0.19: the set of ids the RPC accepts changed, and a host
+# left behind answers `failed_precondition` for immich.
+#
+# 0.0.21 — Ф4 срезы 4.6/4.7/4.8: five more services reach the executor
+# (Nextcloud, Forgejo, Seafile, Psono, GitLab), and with them the first
+# installs that do real work AFTER `up -d` — re-applied Nextcloud config, a
+# CLI-created Forgejo administrator, Seafile's CSRF origins edited into a file
+# the server writes itself, Psono's keypair generated by the image, GitLab's
+# public sign-up closed once its first reconfigure has seeded the database.
+# `psono` also gained the catalog row it never had, so a host below this
+# version answers "unknown service" for it on EVERY management call, not just
+# install. Same bump reason as 0.0.18-0.0.20: the RPC is unchanged, the set of
+# ids it accepts is not. Writes stay inside /opt and /etc/caddy.
+#
+# 0.0.22 — Ф4 срез 4.10: docker-mailserver reaches the executor, the first mail
+# engine installed through the agent. Same bump reason as 0.0.18-0.0.21 (the
+# set of ids `InstallService` accepts changed, and a host left behind answers
+# `failed_precondition`), plus two firsts: this install writes a systemd unit
+# and timer of its own under /etc/systemd/system — already inside the
+# ReadWritePaths 0.0.12 carved out, so the unit file is unchanged again — and
+# it writes /opt/gryonixnexus-dms-dkim.sh, the wrapper the Dkim RPC (0.0.14) has
+# always executed but nothing on the agent's own install path ever created.
+#
+# 0.0.23 — Ф4 срез 4.9: the VPN (the panel plus plain WireGuard) reaches the
+# executor, so the accepted id set grows again — a host below this version
+# answers `failed_precondition` for `vpn`. TWO further reasons a bump is not
+# optional here, both of which change behaviour on hosts that already run an
+# agent:
+#   * this build is the first that writes an nftables drop-in and applies it
+#     (`install/firewall.rs`), and
+#   * it fixes every compose invocation of the installer to name its project
+#     file explicitly (`-f`). The agent's unit sets no WorkingDirectory=, so
+#     systemd starts it in `/` and `docker compose -p <name> up -d` had no
+#     compose file to read at all — every install slice from 4.2 to 4.8 built
+#     its argv that way and would have failed on a real daemon.
+#
+# 0.0.24 — the two slices above were developed in parallel and neither number
+# ever reached a host, so this is the one version that actually carries both.
+# Kept as its own bump rather than reusing 0.0.23: the version IS the upgrade
+# signal (bootstrap skips the rebuild on a match), and a host sitting on a
+# 0.0.23 built from either branch alone would otherwise never be told to
+# rebuild — the same trap 0.0.12 was minted for.
+#
+# 0.0.25 — Passbolt joins the catalog table. No RPC changed, but the SET of ids
+# the agent answers for did, and that set only reaches a host through a
+# rebuild: an agent on 0.0.24 keeps reporting an installed Passbolt as an
+# unrecognised project and keeps refusing every management call for it, which
+# is indistinguishable from "the agent will never support it".
+#
+# 0.0.26 — the mail shelf closes: mailcow and Mailu get executors, so the set
+# of ids `InstallService` accepts grows by two. Same reason as every bump on
+# this list — a host still on 0.0.25 answers `failed_precondition` for both,
+# which reads exactly like "this build will never install them".
+#
+# 0.0.27 — the unit gains /etc/nftables.d. A unit-only change still needs the
+# bump: bootstrap reinstalls the unit on every run but skips the rebuild when
+# versions match, and `systemctl enable --now` does not restart a process that
+# is already running — so without it the fix lands on disk while the sandbox
+# that lacks the path keeps running in memory. That is the 0.0.12 trap, twice
+# paid for.
+#
+# 0.0.28 — the same unit, fixed. 0.0.27's bare /etc/nftables.d did not produce
+# the EROFS it was meant to prevent: on a host without that directory systemd
+# refuses to build the mount namespace at all, so the agent never starts
+# (226/NAMESPACE, in a Restart=always loop). Measured on lab-vps, on 0.0.27's
+# first live run. The entries that are not guaranteed to exist now carry
+# systemd's `-` marker. This bump is what carries the fix to a host that
+# already took 0.0.27 — the same reason as every other line on this list.
+#
+# 0.0.29 — Passbolt's two secret directories are created with the group and
+# modes its IMAGE ships, instead of 0755 root:root like every other directory
+# the executor makes. Found on the first live install: a bind mount is not
+# seeded from the image the way a named volume is, so the server could not
+# write the keypair it generates and crash-looped forever. The unit also gains
+# /etc/wireguard and /etc/sysctl.d, which the uninstall wrapper cleans and
+# which it reaches through the AGENT's namespace, since a spawned wrapper
+# inherits it.
+# 0.0.30 — the four VPN protocols срез 4.9 refused (AmneziaWG, Shadowsocks,
+# XRay/Reality, OpenVPN) now have installers. The RPC did not change, but the
+# SET of accepted `vpn_protocols` values did, and a host on 0.0.29 answers
+# `failed_precondition` for all four — indistinguishable from "never will be
+# supported". Same reason every id-set change on this list was a bump.
+# 0.0.31 — every `docker` child gets a DOCKER_CONFIG it can write to. Found by
+# the first live VPN install (lab-vps, 2026-08-12): ProtectHome=true makes the
+# inherited HOME=/root read-only, and `docker build` creates /root/.docker
+# before it does anything, so it died with EROFS. Not a 0.0.30 regression — the
+# VPN PANEL builds an image the same way, so this broke every VPN install since
+# срез 4.9; `pull`/`up`/`ps` never write config, which is why nothing before a
+# real build noticed. Same wall backup's gpg steps hit, one flag apart.
+# 0.0.32 — an install now leaves the HOST surface behind: the backup, update,
+# uninstall and restore wrappers, the metrics collector and its unit, the
+# admin-lockdown wrapper and the install report, all regenerated from the
+# union of what discover reports and what was just installed. Measured on
+# lab-vps 2026-08-12: RemoveService(vpn) answered "unsupported target: vpn"
+# right after an agent install, because that host's wrapper predated the VPN.
+# The whitelist under /etc/sudoers.d is rewritten only for a control user that
+# ALREADY exists — the agent creates no accounts and installs no keys — so the
+# unit gains -/etc/sudoers.d, and the request gains host_role plus the report's
+# topology, neither of which the agent may infer.
+#
+# 0.0.33 — those files are written NEWLINE-TERMINATED. The fixtures are heredoc
+# bodies and the parity tests strip the last newline, so the writer had to put
+# it back: Ubuntu's visudo rejects a sudoers file whose last line is
+# unterminated, which failed the first live run of 0.0.32 outright. macOS's BSD
+# visudo accepts the same bytes, so only a Linux host could show it.
+#
+# 0.0.34 — the backup wrapper recognises the VPN again. It keyed the panel's
+# backup target on the agent's collapsed "vpn" id while every other module
+# reads catalog ids, and its own fixtures passed the aggregate too, so both
+# halves were internally consistent and disagreed with each other. Found on
+# nukki 2026-08-12: the regenerated wrapper's service list had lost the VPN
+# panel, which is a scheduled backup quietly ceasing to cover it.
+#
+# 0.0.35 — `Install/ProvisionHost`: bring a host's wrappers up to date without
+# installing anything. Two hosts can never reach InstallService — scenario B's
+# relay carries no services at all, and a host whose last service was removed
+# keeps wrappers that still dispatch on it. The relay's surface is also
+# narrowed to what a live one actually has (metrics + uninstall + its own
+# sudoers), instead of the full services-host set.
+#
+# 0.0.36 — a regenerated uninstall wrapper carries the app's public key
+# forward. The wrapper's last act on a full erase is stripping that key from
+# the control user's authorized_keys; the agent never installs one, so a
+# regeneration was dropping the step and leaving the app able to SSH in after
+# the erase it had just performed. Recovered from the wrapper already on disk,
+# the same "read what a human-authorised setup left, never invent" rule the
+# control user follows. Found on the live relay 2026-08-12.
+#
+# 0.0.37 — the host surface now also hands each installed service's backup
+# directory to the control user. Nothing on the agent route ever created
+# these with an owner before: `backup_ctl.sh`'s own `install -d -m 750 "$dir"`
+# is the ONLY thing that made them exist, root-owned, and the dashboard reads
+# the listing over SFTP as the control user — an agent-provisioned host had a
+# silently empty backup tab. Same directories `backup_ctl.sh` itself dispatches
+# into (`backup_ctl::backup_dirs`, the wrapper's own target list exposed
+# read-only), not a second formula.
+#
+# 0.0.38 — an install is refused up front on a host with no Caddy. Measured on
+# a bare VM: mailcow ran fifteen minutes (repo clone, twenty images, config,
+# engine up, REST API, mail domain) and then died on "could not create
+# /etc/caddy: Read-only file system" — every service is published through
+# Caddy and its site is written last, so the whole class fails that way at the
+# end. The EROFS cannot be fixed by creating the directory later either:
+# systemd punches the ReadWritePaths hole once, at namespace build.
+#
+# 0.0.39 — no Mailu CLI call reaches the admin container as root any more.
+# The image declares no USER, so `docker compose exec` landed as root, and
+# every Mailu CLI call opens (and therefore CREATES) the SQLite database at
+# /data/main.db — racing the container's own `flask db upgrade`, which runs
+# as uid 100 after /start.py drops privileges. Root winning that race leaves
+# a database the engine can never write its schema into, which is the live
+# Mailu failure of 2026-08-12: admin unhealthy for ever, every call answering
+# "no such table: domain". A behaviour fix inside the binary, so it reaches
+# an installed host ONLY with this bump.
+#
+# 0.0.58 — the sudoers whitelist grants a log read for every service. The app
+# can now show logs on a server WITHOUT an agent (a bounded `docker logs`
+# tail instead of the agent's live stream), and `sudo` matches an argument
+# vector verbatim: without the line the button exists and the command is
+# refused. The whitelist is written by the agent, so a host keeps its old,
+# log-less file until this version reaches it.
+#
+# 0.0.59 — the control server joins its own mesh. A new catalog id
+# (`tailscale-node`) that the host's wrappers, sudoers and report all have to
+# know, plus the node install itself, which runs as part of Headscale's call.
+# A host on 0.0.58 does not know the id at all: it would render a whitelist
+# and an uninstall wrapper with no arm for a service that is running.
+#
+# 0.0.60 — a home half stops losing its tunnel accepts to a request that
+# forgot them. Those lines ARE the relayed services (the live pair carries
+# eight), so a rewrite without them kills relayed mail at the home firewall
+# with nothing said. The agent now refuses that one narrow case — file has
+# them, request names none — and says which ports it protected. A host on
+# 0.0.59 still obeys.
+#
+# 0.0.61 — an install request may carry the Cloudflare Tunnel's connector
+# token, and the agent writes it into the service's own 0600 .env. Without it
+# a tunnel install finishes with a connector that has no credential, which
+# from the outside is a deployment whose names point nowhere. A host on 0.0.60
+# ignores the field, so the token would silently never arrive.
+#
+# 0.0.62 — the mesh node can join TAILSCALE, not only a Headscale on this
+# host: the login server is a setting (absent means Tailscale's own service),
+# the owner's auth key arrives per install, and the node is installable on its
+# own because that variant has no control server to ride in with. It also
+# reports as ITSELF in discover now — a host running only the client is not a
+# host running Headscale. A host on 0.0.61 refuses the id outright.
+#
+# 0.0.63 — dynamic DNS: two RPCs and a root-owned updater with a systemd timer,
+# so a host on a changing address keeps its own A records current. Written by
+# the AGENT only — the generated setup script has no Cloudflare token and never
+# will, so writing it there would leave a timer on every host that could never
+# run. A host on 0.0.62 answers the verbs with a 404.
+#
+# 0.0.64 — the updater's Cloudflare parsing. 0.0.63 extracted ids with a GREEDY
+# sed, which yields the LAST match in the document: the zone lookup returned a
+# nested tenant id and every later call was refused as "Authentication error",
+# blaming the token. Found on the first live run. It reached one host, so the
+# fix needs its own version — bootstrap skips the rebuild when versions match.
+#
+# 0.0.65 — the uninstall wrapper removes the dynamic-DNS updater and its units.
+# A full erase on a live host left them behind, so an "erased" machine with DDNS
+# still on kept a root-owned timer firing every five minutes. The wrapper is a
+# function of the installed set and is rewritten on every install, so a host
+# only gets the corrected one from an agent that knows about it.
+#
+# 0.0.66 — the dynamic-DNS updater asks for BOTH address families by name and
+# matches the record type to the family. A live home host's default egress was
+# IPv6, so the single unqualified ask returned a v6 address and the v4 charset
+# check threw it away as "no address" — on exactly the kind of machine dynamic
+# DNS exists for. A host on 0.0.65 keeps the v4-only updater until it is
+# rewritten by a newer agent.
+# 0.0.67 — RunUpdate's refusal trailer says `failed_precondition` instead of
+# `internal` when the wrapper refused and touched nothing (exit 2: an unknown
+# label, or a service that ships its own updater). Measured on a live host:
+# our own Swift client reads only the message and is unaffected, but the
+# conformant client this wire format exists for reads the code, and could not
+# tell "this was never going to run" from "the agent broke".
+#
+# 0.0.74 — two services that could never start are repaired rather than left
+# alone. Both files were written by the SSH route and both are guarded by
+# "create it only when absent", so the broken content survived every re-run:
+# headscale's extra-records file held a LITERAL backslash-n (a doubled
+# backslash in a raw Swift string is not an escape) and the server refuses to
+# parse it; Authelia's users database held docker's own `Digest: sha256:…`
+# line, printed while pulling the image and read as if it were the password
+# hash, which the portal refuses at startup. Both were measured on a live host
+# 2026-08-20, both as endless restart loops. The agent now replaces exactly
+# those two contents — a file that neither service can load has never held
+# anything worth keeping — and refuses to write a digest without the crypt
+# delimiter. A host left on 0.0.73 keeps both loops, since the repair only
+# exists in the binary.
+#
+# 0.0.75 — the mesh control server is never put behind the sign-on portal, even
+# when the request names it. `tailscale up` cannot follow a browser login, so
+# the gate does not ask a device for a password, it makes joining impossible —
+# the same failure the VPN guard caused, and it reached a live host, where
+# `mesh.<domain>` redirected to the portal. 0.0.74 shipped without the
+# exclusion, so a host on it keeps gating that site until this build replaces
+# the binary.
+#
+# 0.0.82 gives every install a NAME and a journal, which is what lets the phone
+# be closed mid-install. The work never belonged to the stream — `run_install`
+# has always spawned it into the daemon, and no step treats a failed send as a
+# reason to stop — but there was no way to ask about a run afterwards, so
+# leaving the screen meant never finding out. `WatchInstall` reattaches to a run
+# in progress or reads back a finished one, `ListInstallJobs` says what this
+# host has run, and a second install of a service already installing is now
+# refused by name instead of racing the first. A host left on 0.0.81 answers
+# both new routes with a 404 the app reads as a dead route, so the bump is what
+# carries them to the fleet.
+#
+# 0.0.83 — the update of a foreign group no longer reports success while the
+# host crash-loops on the new image. Measured on `vps-middle` (2026-08-25):
+# `docker compose ps` says `running` for 1.5s after `up -d` returns, the health
+# check believed its first sample, and the rollback the whole verb exists for
+# never ran. A host left on 0.0.82 still has that, and it is silent — which is
+# the reason this bump is not optional.
+#
+# 0.0.84 — a removed container group no longer carries its last backup time
+# forward. The schedule row outlives the group, so a stack torn down and
+# brought back under the same compose name read as "backed up an hour ago",
+# pointing at an archive the removal had just deleted, and waited a full window
+# before its first real backup. Measured on `vps-middle` the same day as 0.0.83.
+#
+# 0.0.94 — the deployment's own passwords move ONTO the server, and a device's
+# session can be given an end. Three things a host on 0.0.93 answers wrongly, so
+# the bump is what carries them: the two `Vault` routes and the two session-
+# policy routes are a 404 there (the app reads that as a dead route and falls
+# back to its own Keychain, which is exactly the behaviour this replaces); the
+# `devices` table gains `device_uid`, `expires_at` and `last_seen_at`, and the
+# migration that adds them to an ALREADY PAIRED database only runs in this
+# build; and `Pair` learns to key a row by the app installation rather than by
+# the deployment key, which is what makes "sign this device out" mean one phone
+# instead of every phone that ever imported the server. The vault key
+# (`/var/lib/gryonixnexus/agent/vault.key`, 0600) is created on first use inside
+# the agent's existing 0700 state directory, so the unit file is unchanged.
+# 0.0.98 adds one read-only route, `Security/GetSecurityStatus`: the host's own
+# CrowdSec state and what it has caught, so the app can show that the intrusion
+# defence `ProvisionHost` installs is actually running. A host on 0.0.97 answers
+# it with a 404 the app reads as "this agent is too old to say", so the bump is
+# what carries it to the fleet. Nothing else changes — no new table, no unit
+# edit, and CrowdSec itself is still installed and updated by ProvisionHost.
+#
+# 0.0.100 — the host stops lying about what it runs, and one refusal gains a
+# way out. Two owner decisions of 2026-09-04, and the bump is what carries both
+# to the fleet:
+#
+# * **`GetState` now includes what THIS AGENT did.** The services table used to
+#   hold "what the last `Discover` saw", so a service installed since the last
+#   scan was missing from the snapshot the app is documented to draw — measured
+#   live 2026-08-26: twelve services running, ten reported. Install and removal
+#   now write their own outcome (`Store::record_action`), pruning stays
+#   `Discover`'s alone, and a docker query that FAILED records nothing rather
+#   than erasing a service that is running. A host on 0.0.99 goes on
+#   under-reporting; nothing else changes, no new route and no new table.
+# * **An update whose group has nothing to back up is refused BEFORE the pull,
+#   with a marker.** A stack that keeps everything inside its images produces a
+#   plan naming nothing; the backup then archived nothing, and the failed
+#   backup stopped the update with a reason offering nothing to do. The refusal
+#   stays — "there was no backup" must never be read as "there was nothing to
+#   back up" — but it now leads with `nothing_to_archive:` so both apps can
+#   offer "update without a backup". A plan whose sources have VANISHED is
+#   deliberately NOT this case: that refusal still comes from the host mid-run,
+#   carries no marker, and updating past it destroys data with no copy.
+# * **Every Caddy site block now says whose it is** — `# gryonixnexus: <id>`,
+#   first line inside the braces. A block was a list of names and nothing else,
+#   so a second service asking for exactly the names another already served was
+#   indistinguishable from the first one reinstalling: the block was replaced
+#   and the first service lost its site with no error anywhere. A block naming
+#   NOBODY still belongs to whoever asks — that is every Caddyfile already on a
+#   host, and reading them as a stranger's would refuse a site the deployment
+#   has been serving for months. This changes the BYTES all three generators
+#   write; a host stays on its old blocks until setup is re-run, which is the
+#   case that "no owner means ours" exists for.
+#
+# 0.0.101 — the site-name check moved to the FRONT of the install. Found by the
+# live run of 2026-09-04, on the very host 0.0.100 had just been built on: the
+# check worked and had worked for weeks, and it ran from `write_caddy_site` at
+# the END, so Psono asking for a name Vaultwarden already served was pulled,
+# started and given an administrator before being refused a web address — under
+# a message that said nothing had changed. It is a precondition now, beside the
+# port preflight, costing one file read and answering before anything exists to
+# clean up. The late check STAYS for two installs racing each other past it,
+# and no longer claims the host is untouched: by then the service is installed
+# and only its site is missing.
+#
+# **This is also why the number moved at all.** 0.0.100 had reached exactly one
+# host and the fix was going to ride under the same version — until the
+# bootstrap refused to rebuild ("0.0.100 already installed") and made the point
+# the version exists for: two hosts on one number must not differ.
+# 0.0.102 — a provider key saved from a device now reaches the gateway. The
+# reconciliation rendered `/etc/gryonixnexus/litellm-keys.env` correctly and
+# then ran `docker restart litellm`, and that is not enough: compose resolves
+# `env_file` when a container is CREATED and stores the result in the
+# container's own config, so the restart brought the gateway back with exactly
+# the environment it already had. The live run of 2026-09-08 saved a key,
+# watched the file change, watched the container bounce, and still got "the
+# api_key client option must be set" out of `/v1/chat/completions` — a feature
+# that was right in every file and did nothing. The gateway is re-created from
+# the compose file its own labels name; the plain restart stays as the fallback
+# for a container compose did not create.
+#
+# Also: every compose file the agent writes now ends with a newline, the way
+# the generated script's heredoc has always ended it. One byte, no runtime
+# effect, and the two delivery paths are two ports of one thing — a host that
+# has seen both should not be able to say which wrote its files. And OpenClaw
+# is given the configuration it refuses to start without, the same file the
+# script writes.
+# 0.0.103 — the git-over-SSH port is opened in the firewall by the agent's
+# install too. GitLab and Forgejo are the only two services whose port is
+# published straight onto the HOST rather than proxied by Caddy on 443, and
+# neither install wrote the nftables drop-in for it. Found live on 2026-09-08:
+# GitLab installed by the agent answered on https, reported success, and
+# `nc -z <host> 2223` timed out — a repository nobody could clone over SSH. The
+# generated script's own firewall step had always covered that port, so this
+# was one delivery path quietly disagreeing with the other. A source scan keeps
+# it closed: an install function for a host-published port must call
+# `open_service_firewall_ports`.
+# 0.0.104 — OpenClaw's web address serves the assistant instead of an error.
+# The gateway attributes every request to a client and refuses the ones it
+# cannot attribute; behind Caddy it could attribute none of them, so
+# `agent.<domain>` answered 403 `proxy_attribution` to everything while the
+# gateway itself was healthy on the loopback. Measured live 2026-09-08 — the
+# service had a hostname, a certificate, a token and a report line, and no
+# reachable page at all. Both halves are here: the seeded config trusts the
+# docker bridge range the proxy reaches it from, and the site now OVERWRITES
+# `X-Forwarded-For` rather than appending to it, which is what stops a client
+# putting a forged address in front of the real one.
+# 0.0.105 — SearXNG can be updated again. The update table gave it a backup id
+# the backup wrapper has no arm for, and the update takes a backup FIRST and
+# stops when it cannot: the service was not "less protected", it was
+# unupdatable. Measured live 2026-09-08 — `RunUpdate(searxng)` answered "the
+# backup failed" on an update with nothing wrong with it. It declares no backup
+# on either side (its whole state is the settings file the install writes and a
+# cache it can fetch again), so the id is empty, like `ollama`'s. A test now
+# checks every update target's backup id against the backup wrapper's own
+# generated text rather than against a second list — two lists are what
+# disagreed.
+# 0.0.106 — the five Mods RPCs: the Modrinth catalogue searched FROM THE HOST,
+# and the jars an owner uploads. A host left on 0.0.105 answers all five with a
+# 404 the app reads as a dead route, so the bump is what carries them to the
+# fleet. The search runs here rather than on the phone because the app talks to
+# the machines it owns and to nothing else (owner, 2026-09-08), and it is done
+# with `curl` rather than an HTTP crate for the same reason the dynamic DNS
+# updater is: this binary carries no TLS stack, and adding one to ask a search
+# engine a question would be its largest dependency. The install also creates
+# `mods/` and `plugins/` beside the compose file — the image's own drop-in
+# directories, which is where an uploaded jar lands and where nothing Modrinth
+# manages can delete it.
+# 0.0.107 — the four Security RPCs that make the host's own defence steerable:
+# GetSecurityDecisions, SetSecurityDecision, GetSecurityAllowlist and
+# SetSecurityAllowlist. Bought by a real lockout (owner, 2026-09-12): eleven
+# failed key attempts from the workstation put its address in
+# `crowdsecurity/ssh-slow-bf`, CrowdSec dropped EVERY packet from it for four
+# hours, and the whole fleet went unreachable from the only network its owner
+# was on — SSH, this agent and the app with it. Seeing the list and lifting a
+# ban are the repair; the allowlist is the only one of the three that helps,
+# because it is set BEFORE the wall goes up. A host left on 0.0.106 answers all
+# four with a 404 the app reads as a dead route, so the bump is what carries
+# them to the fleet. The decisions read flattens CrowdSec's ALERTS into the rows
+# the list draws, `ss` supplies the addresses with an SSH session open (the app
+# reaches this agent through a tunnel and cannot see its own), and every
+# mutating call re-reads the list from the host rather than echoing the request.
+version = "0.0.108"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+
+[[bin]]
+name = "gryonixnexusd"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "io-util", "io-std", "fs", "process", "time", "sync"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+prost = "0.13"
+# Connect uses JSON on the wire when a client asks for it (the debuggable path);
+# protobuf-binary is the default. serde_json backs the JSON codec.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Agent-owned state: /var/lib/gryonixnexus/agent/state.db (root-only). SQLite is bundled
+# so the binary stays self-contained.
+rusqlite = { version = "0.31", features = ["bundled"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1"
+# statvfs(3) for per-mount disk size/used — there is no /proc file for it. Tiny,
+# no transitive deps; the only FFI in the agent, confined to metrics.
+libc = "0.2"
+# Sealing the vault rows at rest (XChaCha20-Poly1305). The only crypto in the
+# agent, confined to `vault.rs`: pure Rust, no C, no system OpenSSL to track
+# across the distributions this binary is built on. Randomness comes from
+# /dev/urandom rather than a second crate — see the module doc.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+
+[build-dependencies]
+# Compiles ../proto into Rust types at build time — the same schema the clients
+# generate from, so the contract cannot drift between agent and app.
+prost-build = "0.13"
+
+[profile.release]
+lto = true
+strip = true
+opt-level = "z"     # a control-plane daemon: favour size over raw throughput

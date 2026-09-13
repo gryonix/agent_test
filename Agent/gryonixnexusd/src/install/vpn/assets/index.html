@@ -1,0 +1,243 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Gryonix VPN</title><style>
+:root{--bg:#f6f6f7;--sf:#ffffff;--sf2:#fafafb;--bd:#e3e3e6;--tx:#1d1d1f;--t2:#6b6b70;--inv:#ffffff;--btn:#1d1d1f;--bad:#b42318;--ok:#2f6f43;--font:-apple-system,BlinkMacSystemFont,system-ui,"Segoe UI",Roboto,Inter,sans-serif}
+@media(prefers-color-scheme:dark){:root{--bg:#0d0d0f;--sf:#161618;--sf2:#1c1c1f;--bd:#2c2c31;--tx:#ededf0;--t2:#9a9aa1;--inv:#0d0d0f;--btn:#ededf0;--bad:#f97066;--ok:#75c99a}}
+:root[data-theme=light]{--bg:#f6f6f7;--sf:#ffffff;--sf2:#fafafb;--bd:#e3e3e6;--tx:#1d1d1f;--t2:#6b6b70;--inv:#ffffff;--btn:#1d1d1f;--bad:#b42318;--ok:#2f6f43}
+:root[data-theme=dark]{--bg:#0d0d0f;--sf:#161618;--sf2:#1c1c1f;--bd:#2c2c31;--tx:#ededf0;--t2:#9a9aa1;--inv:#0d0d0f;--btn:#ededf0;--bad:#f97066;--ok:#75c99a}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);color:var(--tx);background:var(--bg);min-height:100vh;-webkit-font-smoothing:antialiased;font-size:14px}
+h1{font-size:17px;font-weight:600;letter-spacing:-.015em;margin:0}
+/* Wordmark: "Gryonix" light, "VPN" heavy — one lockup, no pictogram. The
+   header used to carry a lone geometric glyph in a filled square, which
+   read as a placeholder rather than a logo. */
+.wm{display:inline-flex;align-items:baseline;letter-spacing:-.015em;white-space:nowrap}
+.wm i{font-style:normal;font-weight:450;color:var(--t2)}
+.wm b{font-weight:680;color:var(--tx);letter-spacing:-.02em}
+.tg{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;cursor:pointer;background:var(--sf);border:1px solid var(--bd);color:var(--t2);flex:none}
+.tg:hover{color:var(--tx);background:var(--sf2);border-color:var(--t2)}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:12px;margin-bottom:22px;overflow:hidden}
+.field{width:100%;font:inherit;font-size:14px;padding:11px 13px;border-radius:9px;margin-bottom:14px;background:var(--sf);border:1px solid var(--bd);color:var(--tx)}
+.field:focus{outline:none;border-color:var(--tx)}
+.btn{width:100%;font:inherit;font-size:14px;font-weight:560;padding:12px;border-radius:9px;cursor:pointer;border:1px solid var(--btn);background:var(--btn);color:var(--inv)}
+.btn:disabled{opacity:.5}
+.btn.g{background:var(--sf);border-color:var(--bd);color:var(--tx);margin-top:10px}
+.btn.g:hover{background:var(--sf2)}
+/* Round icon buttons. They were 28px squares with a text glyph inside —
+   the "squares" complaint — so they are circles now, sized for a real tap
+   target, and the QR one is filled because it is the primary action of a
+   client row. */
+.mini{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--t2);background:var(--sf);border:1px solid var(--bd);text-decoration:none;flex:none;transition:background .12s,color .12s,border-color .12s}
+.mini:hover{color:var(--tx);background:var(--sf2);border-color:var(--t2)}
+.mini.pri{background:var(--btn);border-color:var(--btn);color:var(--inv)}
+.mini.pri:hover{opacity:.85;background:var(--btn);color:var(--inv)}
+.mini.dgr:hover{color:var(--bad);border-color:var(--bad)}
+.mini svg,.tg svg{width:16px;height:16px;display:block}
+.err{color:var(--bad);font-size:12.5px;min-height:17px;margin:4px 0 10px}
+.scrim{position:fixed;inset:0;z-index:60;display:none;place-items:center;padding:20px;background:rgba(0,0,0,.45)}
+.scrim.show{display:grid}
+.sheet{width:100%;max-width:400px;background:var(--sf);border:1px solid var(--bd);border-radius:16px;padding:26px;text-align:left}
+.sheet h2{margin:0 0 18px;font-size:16px;font-weight:600}
+.conf{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:var(--sf2);border:1px solid var(--bd);border-radius:9px;padding:13px;color:var(--t2);white-space:pre-wrap;word-break:break-all;max-height:130px;overflow:auto;margin-bottom:16px}
+.wrap{max-width:920px;margin:0 auto;padding:0 22px 96px}
+header{display:flex;align-items:center;gap:14px;padding:22px 0;margin-bottom:10px;border-bottom:1px solid var(--bd)}
+header p{margin:3px 0 0;font-size:12px;color:var(--t2)}
+.sp{flex:1}
+.lbl{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--t2);margin:38px 2px 14px}
+.row{display:flex;align-items:center;gap:13px;padding:18px 20px;background:var(--sf2);border-bottom:1px solid var(--bd)}
+.ic{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ok)}
+.row h3{margin:0;font-size:14px;font-weight:600}
+.row .ep{margin:4px 0 0;font-size:12px;color:var(--t2);font-variant-numeric:tabular-nums}
+.pill{margin-left:auto;font-size:11.5px;font-weight:500;color:var(--t2)}
+.cli{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--bd);min-height:62px}
+.cli:last-child{border-bottom:0}
+.cli b{font-weight:530;font-size:13.5px}
+.cli span{color:var(--t2);font-size:12px;margin-left:10px;font-variant-numeric:tabular-nums}
+.cli .a{margin-left:auto;display:flex;gap:9px;align-items:center}
+.add{display:flex;align-items:center;gap:9px;width:100%;text-align:left;font:inherit;font-size:13.5px;font-weight:530;color:var(--t2);background:transparent;border:0;border-top:1px solid var(--bd);padding:16px 20px;cursor:pointer}
+.add svg{width:15px;height:15px}
+.add:hover{color:var(--tx);background:var(--sf2)}
+.ro{padding:16px 20px;font-size:12.5px;color:var(--t2);line-height:1.5}
+.nb{border-bottom:1px solid var(--bd)}
+.qr{width:200px;height:200px;display:block;margin:0 auto 18px;background:#fff;border-radius:12px;padding:11px}
+.empty{color:var(--t2);text-align:center;padding:48px 0;font-size:13.5px}
+</style></head><body><div class="wrap">
+<header><div><h1 class="wm"><i>Gryonix</i><b>VPN</b></h1><p id="host">protected</p></div><div class="sp"></div><div class="tg" id="out" role="button" tabindex="0" data-ic="exit"></div><div class="tg" id="tg" role="button" tabindex="0" data-ic="theme"></div></header>
+<div class="lbl" id="lbl">VPN services</div><div id="list"><div class="empty" id="loading">Loading…</div></div>
+<div id="usersec" style="display:none"><div class="lbl" id="ulbl">Accounts</div><div id="users"></div>
+<div class="lbl" id="mlbl">E-mail</div><div class="card" id="mailcard">
+  <div class="cli"><b id="msender"></b><span id="mstate"></span><div class="a"><button class="mini" id="medit" data-ic="pencil"></button></div></div>
+</div></div></div>
+<div class="scrim" id="qr"><div class="sheet"><h2 id="qrn">client</h2><img class="qr" id="qri" alt="QR" width="200" height="200"><div class="conf" id="qrt"></div><button class="btn" id="qrdl"></button><button class="btn g" id="qrclose" onclick="hide()"></button></div></div>
+<div class="scrim" id="add"><div class="sheet"><h2 id="addt"></h2><input class="field" id="addn"><button class="btn" id="addgo"></button><button class="btn g" id="addcancel" onclick="hide()"></button></div></div>
+<div class="scrim" id="au"><div class="sheet"><h2 id="aut"></h2><input class="field" id="aun"><input class="field" id="aup" type="password"><select class="field" id="aur"><option value="user"></option><option value="admin"></option></select><button class="btn" id="augo"></button><button class="btn g" id="aucancel" onclick="hide()"></button></div></div>
+<div class="scrim" id="ms"><div class="sheet"><h2 id="mst"></h2>
+  <select class="field" id="mbox" style="display:none"></select>
+  <div id="mhint" class="conf" style="display:none"></div>
+  <input class="field" id="mhost"><input class="field" id="mport" inputmode="numeric">
+  <select class="field" id="msec"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">—</option></select>
+  <input class="field" id="muser"><input class="field" id="mpass" type="password"><input class="field" id="mfrom">
+  <button class="btn" id="msgo"></button><button class="btn g" id="mstest"></button><button class="btn g" id="mscancel" onclick="hide()"></button></div></div>
+<script>
+var I18N={
+en:{services:"VPN services",loading:"Loading…",empty:"No VPN services installed.",running:"Running",add:"Add client",newc:"New client",nameph:"Device name — e.g. iPhone",create:"Create",cancel:"Cancel",close:"Close",download:"Download",signout:"Sign out",removeq:"Remove this client?",soon:"Client management for this protocol is coming soon. Use the details from the setup report for now.",reqfail:"Request failed.",neterr:"Network error.",protected:"protected",signin:"Sign in",signingin:"Signing in…",user:"Username",pass:"Password",subtitle:"Sign in to manage your VPN",wrong:"Wrong username or password.",toomany:"Too many attempts. Please wait a few minutes.",accounts:"Accounts",adduser:"Add account",newuser:"New account",removeuserq:"Remove this account?",rsuper:"Main administrator",radmin:"Administrator",ruser:"User",forgot:"Forgot your password?",entername:"Enter your username first.",resetsent:"If that account has an e-mail address, a reset link is on its way.",newpass:"Choose a new password",passagain:"Repeat the password",nomatch:"The passwords do not match.",tooshort:"At least 8 characters, please.",save:"Save",email:"E-mail",emailsetup:"Outgoing mail",smtphost:"SMTP server",smtpport:"Port",sender:"Sender address",sendtest:"Send a test",testsent:"Test message sent.",notset:"Not configured",nosmtp:"No server set",pickbox:"Pick a mailbox…",nomailboxes:"No mailboxes found. Create one in mailcow, or fill in an external SMTP server below.",wgonly:"Admin panels (mail, cloud, photos, vault) open only over WireGuard. This protocol is for general internet access."},
+ru:{services:"VPN-сервисы",loading:"Загрузка…",empty:"VPN-сервисы не установлены.",running:"Работает",add:"Добавить клиента",newc:"Новый клиент",nameph:"Имя устройства — напр. iPhone",create:"Создать",cancel:"Отмена",close:"Закрыть",download:"Скачать",signout:"Выйти",removeq:"Удалить этого клиента?",soon:"Управление клиентами для этого протокола скоро появится. Пока используйте данные из отчёта установки.",reqfail:"Не удалось выполнить запрос.",neterr:"Ошибка сети.",protected:"защищено",signin:"Войти",signingin:"Вход…",user:"Имя пользователя",pass:"Пароль",subtitle:"Войдите, чтобы управлять VPN",wrong:"Неверное имя пользователя или пароль.",toomany:"Слишком много попыток. Подождите несколько минут.",accounts:"Учётные записи",adduser:"Добавить пользователя",newuser:"Новый пользователь",removeuserq:"Удалить эту учётную запись?",rsuper:"Главный администратор",radmin:"Администратор",ruser:"Пользователь",forgot:"Забыли пароль?",entername:"Сначала введите имя пользователя.",resetsent:"Если у этой учётной записи есть адрес почты, ссылка для сброса уже отправлена.",newpass:"Придумайте новый пароль",passagain:"Повторите пароль",nomatch:"Пароли не совпадают.",tooshort:"Минимум 8 символов.",save:"Сохранить",email:"Почта",emailsetup:"Исходящая почта",smtphost:"SMTP-сервер",smtpport:"Порт",sender:"Адрес отправителя",sendtest:"Отправить тест",testsent:"Тестовое письмо отправлено.",notset:"Не настроено",nosmtp:"Сервер не задан",pickbox:"Выберите ящик…",nomailboxes:"Ящики не найдены. Создайте ящик в mailcow или укажите внешний SMTP-сервер ниже.",wgonly:"Админ-панели (почта, облако, фото, vault) открываются только через WireGuard. Этот протокол — для обычного доступа в интернет."},
+uk:{services:"VPN-сервіси",loading:"Завантаження…",empty:"VPN-сервіси не встановлені.",running:"Працює",add:"Додати клієнта",newc:"Новий клієнт",nameph:"Назва пристрою — напр. iPhone",create:"Створити",cancel:"Скасувати",close:"Закрити",download:"Завантажити",signout:"Вийти",removeq:"Видалити цього клієнта?",soon:"Керування клієнтами для цього протоколу скоро з’явиться. Поки що скористайтеся даними зі звіту встановлення.",reqfail:"Не вдалося виконати запит.",neterr:"Помилка мережі.",protected:"захищено",signin:"Увійти",signingin:"Вхід…",user:"Ім’я користувача",pass:"Пароль",subtitle:"Увійдіть, щоб керувати VPN",wrong:"Невірне ім’я користувача або пароль.",toomany:"Забагато спроб. Зачекайте кілька хвилин.",accounts:"Облікові записи",adduser:"Додати користувача",newuser:"Новий користувач",removeuserq:"Видалити цей обліковий запис?",rsuper:"Головний адміністратор",radmin:"Адміністратор",ruser:"Користувач",forgot:"Забули пароль?",entername:"Спочатку введіть ім’я користувача.",resetsent:"Якщо в цього облікового запису є адреса пошти, посилання для скидання вже надіслано.",newpass:"Придумайте новий пароль",passagain:"Повторіть пароль",nomatch:"Паролі не збігаються.",tooshort:"Щонайменше 8 символів.",save:"Зберегти",email:"Пошта",emailsetup:"Вихідна пошта",smtphost:"SMTP-сервер",smtpport:"Порт",sender:"Адреса відправника",sendtest:"Надіслати тест",testsent:"Тестовий лист надіслано.",notset:"Не налаштовано",nosmtp:"Сервер не задано",pickbox:"Оберіть скриньку…",nomailboxes:"Скриньок не знайдено. Створіть скриньку в mailcow або вкажіть зовнішній SMTP-сервер нижче.",wgonly:"Адмін-панелі (пошта, хмара, фото, vault) відкриваються лише через WireGuard. Цей протокол — для звичайного доступу до інтернету."},
+de:{services:"VPN-Dienste",loading:"Wird geladen…",empty:"Keine VPN-Dienste installiert.",running:"Aktiv",add:"Client hinzufügen",newc:"Neuer Client",nameph:"Gerätename — z. B. iPhone",create:"Erstellen",cancel:"Abbrechen",close:"Schließen",download:"Herunterladen",signout:"Abmelden",removeq:"Diesen Client entfernen?",soon:"Die Client-Verwaltung für dieses Protokoll kommt bald. Nutzen Sie vorerst die Angaben aus dem Installationsbericht.",reqfail:"Anfrage fehlgeschlagen.",neterr:"Netzwerkfehler.",protected:"geschützt",signin:"Anmelden",signingin:"Anmeldung…",user:"Benutzername",pass:"Passwort",subtitle:"Melden Sie sich an, um Ihr VPN zu verwalten",wrong:"Falscher Benutzername oder Passwort.",toomany:"Zu viele Versuche. Bitte warten Sie einige Minuten.",accounts:"Konten",adduser:"Konto hinzufügen",newuser:"Neues Konto",removeuserq:"Dieses Konto entfernen?",rsuper:"Hauptadministrator",radmin:"Administrator",ruser:"Benutzer",forgot:"Passwort vergessen?",entername:"Bitte zuerst den Benutzernamen eingeben.",resetsent:"Falls für dieses Konto eine E-Mail-Adresse hinterlegt ist, ist der Link unterwegs.",newpass:"Neues Passwort wählen",passagain:"Passwort wiederholen",nomatch:"Die Passwörter stimmen nicht überein.",tooshort:"Mindestens 8 Zeichen.",save:"Speichern",email:"E-Mail",emailsetup:"Ausgehende E-Mail",smtphost:"SMTP-Server",smtpport:"Port",sender:"Absenderadresse",sendtest:"Test senden",testsent:"Testnachricht gesendet.",notset:"Nicht eingerichtet",nosmtp:"Kein Server gesetzt",pickbox:"Postfach wählen…",nomailboxes:"Keine Postfächer gefunden. Legen Sie eines in mailcow an oder tragen Sie unten einen externen SMTP-Server ein.",wgonly:"Admin-Oberflächen (Mail, Cloud, Fotos, Vault) lassen sich nur über WireGuard öffnen. Dieses Protokoll dient dem allgemeinen Internetzugang."},
+es:{services:"Servicios VPN",loading:"Cargando…",empty:"No hay servicios VPN instalados.",running:"En ejecución",add:"Añadir cliente",newc:"Nuevo cliente",nameph:"Nombre del dispositivo — p. ej. iPhone",create:"Crear",cancel:"Cancelar",close:"Cerrar",download:"Descargar",signout:"Cerrar sesión",removeq:"¿Eliminar este cliente?",soon:"La gestión de clientes para este protocolo llegará pronto. Por ahora usa los datos del informe de instalación.",reqfail:"Error en la solicitud.",neterr:"Error de red.",protected:"protegido",signin:"Iniciar sesión",signingin:"Iniciando sesión…",user:"Usuario",pass:"Contraseña",subtitle:"Inicia sesión para gestionar tu VPN",wrong:"Usuario o contraseña incorrectos.",toomany:"Demasiados intentos. Espera unos minutos.",accounts:"Cuentas",adduser:"Añadir cuenta",newuser:"Nueva cuenta",removeuserq:"¿Eliminar esta cuenta?",rsuper:"Administrador principal",radmin:"Administrador",ruser:"Usuario",forgot:"¿Olvidaste tu contraseña?",entername:"Introduce primero tu usuario.",resetsent:"Si esa cuenta tiene correo, el enlace ya va en camino.",newpass:"Elige una contraseña nueva",passagain:"Repite la contraseña",nomatch:"Las contraseñas no coinciden.",tooshort:"Mínimo 8 caracteres.",save:"Guardar",email:"Correo",emailsetup:"Correo saliente",smtphost:"Servidor SMTP",smtpport:"Puerto",sender:"Dirección del remitente",sendtest:"Enviar una prueba",testsent:"Mensaje de prueba enviado.",notset:"Sin configurar",nosmtp:"Sin servidor",pickbox:"Elige un buzón…",nomailboxes:"No se encontraron buzones. Crea uno en mailcow o indica abajo un servidor SMTP externo.",wgonly:"Los paneles de administración (correo, nube, fotos, vault) solo se abren a través de WireGuard. Este protocolo es para el acceso general a Internet."},
+fr:{services:"Services VPN",loading:"Chargement…",empty:"Aucun service VPN installé.",running:"Actif",add:"Ajouter un client",newc:"Nouveau client",nameph:"Nom de l’appareil — p. ex. iPhone",create:"Créer",cancel:"Annuler",close:"Fermer",download:"Télécharger",signout:"Se déconnecter",removeq:"Supprimer ce client ?",soon:"La gestion des clients pour ce protocole arrive bientôt. Utilisez pour l’instant les informations du rapport d’installation.",reqfail:"Échec de la requête.",neterr:"Erreur réseau.",protected:"protégé",signin:"Se connecter",signingin:"Connexion…",user:"Nom d’utilisateur",pass:"Mot de passe",subtitle:"Connectez-vous pour gérer votre VPN",wrong:"Nom d’utilisateur ou mot de passe incorrect.",toomany:"Trop de tentatives. Veuillez patienter quelques minutes.",accounts:"Comptes",adduser:"Ajouter un compte",newuser:"Nouveau compte",removeuserq:"Supprimer ce compte ?",rsuper:"Administrateur principal",radmin:"Administrateur",ruser:"Utilisateur",forgot:"Mot de passe oublié ?",entername:"Saisissez d’abord votre nom d’utilisateur.",resetsent:"Si ce compte a une adresse e-mail, le lien est en route.",newpass:"Choisissez un nouveau mot de passe",passagain:"Répétez le mot de passe",nomatch:"Les mots de passe ne correspondent pas.",tooshort:"8 caractères minimum.",save:"Enregistrer",email:"E-mail",emailsetup:"Courrier sortant",smtphost:"Serveur SMTP",smtpport:"Port",sender:"Adresse d’expéditeur",sendtest:"Envoyer un test",testsent:"Message de test envoyé.",notset:"Non configuré",nosmtp:"Aucun serveur",pickbox:"Choisir une boîte…",nomailboxes:"Aucune boîte trouvée. Créez-en une dans mailcow ou renseignez un serveur SMTP externe ci-dessous.",wgonly:"Les panneaux d'administration (courrier, cloud, photos, vault) ne s'ouvrent que via WireGuard. Ce protocole sert à l'accès Internet général."},
+it:{services:"Servizi VPN",loading:"Caricamento…",empty:"Nessun servizio VPN installato.",running:"Attivo",add:"Aggiungi client",newc:"Nuovo client",nameph:"Nome del dispositivo — es. iPhone",create:"Crea",cancel:"Annulla",close:"Chiudi",download:"Scarica",signout:"Esci",removeq:"Rimuovere questo client?",soon:"La gestione dei client per questo protocollo arriverà presto. Per ora usa i dati del report di installazione.",reqfail:"Richiesta non riuscita.",neterr:"Errore di rete.",protected:"protetto",signin:"Accedi",signingin:"Accesso…",user:"Nome utente",pass:"Password",subtitle:"Accedi per gestire la tua VPN",wrong:"Nome utente o password errati.",toomany:"Troppi tentativi. Attendi qualche minuto.",accounts:"Account",adduser:"Aggiungi account",newuser:"Nuovo account",removeuserq:"Rimuovere questo account?",rsuper:"Amministratore principale",radmin:"Amministratore",ruser:"Utente",forgot:"Password dimenticata?",entername:"Inserisci prima il nome utente.",resetsent:"Se quell’account ha un indirizzo e-mail, il link è in arrivo.",newpass:"Scegli una nuova password",passagain:"Ripeti la password",nomatch:"Le password non coincidono.",tooshort:"Almeno 8 caratteri.",save:"Salva",email:"E-mail",emailsetup:"Posta in uscita",smtphost:"Server SMTP",smtpport:"Porta",sender:"Indirizzo mittente",sendtest:"Invia una prova",testsent:"Messaggio di prova inviato.",notset:"Non configurato",nosmtp:"Nessun server",pickbox:"Scegli una casella…",nomailboxes:"Nessuna casella trovata. Creane una in mailcow oppure indica sotto un server SMTP esterno.",wgonly:"I pannelli di amministrazione (posta, cloud, foto, vault) si aprono solo tramite WireGuard. Questo protocollo serve all'accesso generale a Internet."},
+ja:{services:"VPNサービス",loading:"読み込み中…",empty:"VPNサービスがインストールされていません。",running:"稼働中",add:"クライアントを追加",newc:"新しいクライアント",nameph:"デバイス名 — 例: iPhone",create:"作成",cancel:"キャンセル",close:"閉じる",download:"ダウンロード",signout:"サインアウト",removeq:"このクライアントを削除しますか？",soon:"このプロトコルのクライアント管理は近日対応予定です。当面はセットアップレポートの情報をご利用ください。",reqfail:"リクエストに失敗しました。",neterr:"ネットワークエラー。",protected:"保護済み",signin:"サインイン",signingin:"サインイン中…",user:"ユーザー名",pass:"パスワード",subtitle:"サインインしてVPNを管理",wrong:"ユーザー名またはパスワードが違います。",toomany:"試行回数が多すぎます。数分お待ちください。",accounts:"アカウント",adduser:"アカウントを追加",newuser:"新しいアカウント",removeuserq:"このアカウントを削除しますか？",rsuper:"メイン管理者",radmin:"管理者",ruser:"ユーザー",forgot:"パスワードをお忘れですか？",entername:"先にユーザー名を入力してください。",resetsent:"そのアカウントにメールアドレスが登録されていれば、リセット用リンクを送信しました。",newpass:"新しいパスワードを設定",passagain:"パスワードを再入力",nomatch:"パスワードが一致しません。",tooshort:"8文字以上にしてください。",save:"保存",email:"メール",emailsetup:"送信メール",smtphost:"SMTPサーバー",smtpport:"ポート",sender:"差出人アドレス",sendtest:"テスト送信",testsent:"テストメールを送信しました。",notset:"未設定",nosmtp:"サーバー未設定",pickbox:"メールボックスを選択…",nomailboxes:"メールボックスが見つかりません。mailcow で作成するか、下に外部SMTPサーバーを入力してください。",wgonly:"管理パネル（メール、クラウド、写真、Vault）は WireGuard 経由でのみ開けます。このプロトコルは一般的なインターネット接続用です。"},
+zh:{services:"VPN 服务",loading:"加载中…",empty:"未安装 VPN 服务。",running:"运行中",add:"添加客户端",newc:"新客户端",nameph:"设备名称 — 例如 iPhone",create:"创建",cancel:"取消",close:"关闭",download:"下载",signout:"退出登录",removeq:"删除此客户端？",soon:"该协议的客户端管理即将推出。目前请使用安装报告中的信息。",reqfail:"请求失败。",neterr:"网络错误。",protected:"受保护",signin:"登录",signingin:"登录中…",user:"用户名",pass:"密码",subtitle:"登录以管理您的 VPN",wrong:"用户名或密码错误。",toomany:"尝试次数过多，请稍候几分钟。",accounts:"账户",adduser:"添加账户",newuser:"新账户",removeuserq:"删除此账户？",rsuper:"主管理员",radmin:"管理员",ruser:"用户",forgot:"忘记密码？",entername:"请先输入用户名。",resetsent:"如果该账户设置了邮箱，重置链接已发送。",newpass:"设置新密码",passagain:"再次输入密码",nomatch:"两次密码不一致。",tooshort:"至少 8 个字符。",save:"保存",email:"邮件",emailsetup:"发件设置",smtphost:"SMTP 服务器",smtpport:"端口",sender:"发件人地址",sendtest:"发送测试",testsent:"测试邮件已发送。",notset:"未配置",nosmtp:"未设置服务器",pickbox:"选择邮箱…",nomailboxes:"未找到邮箱。请在 mailcow 中创建，或在下方填写外部 SMTP 服务器。",wgonly:"管理面板（邮件、云盘、相册、Vault）只能通过 WireGuard 打开。此协议用于常规互联网访问。"}
+};
+function lang(){var l=(navigator.language||'en').slice(0,2).toLowerCase();return I18N[l]?l:'en'}
+function t(k){var d=I18N[lang()]||I18N.en;return d[k]||I18N.en[k]||k}
+var ICON={
+qr:'<path d="M3 3h5v5H3zM3 11h5v5H3zM11 3h5v5h-5z"/><path d="M11 11h2v2h-2zM14 14h2v2h-2zM11 15.5h1M15 11h1"/>',
+dl:'<path d="M9.5 3v8m0 0 3.2-3.2M9.5 11 6.3 7.8"/><path d="M3.5 12.5v2a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-2"/>',
+trash:'<path d="M3.5 5.5h12M8 5.5V4a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5"/><path d="M5 5.5 5.7 15a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9L14 5.5"/><path d="M8 8.5v4.5M11 8.5v4.5"/>',
+pencil:'<path d="M12.6 3.4a1.6 1.6 0 0 1 2.3 2.3L6.6 14 3.5 15l1-3.1z"/><path d="M11.2 4.8 13.5 7.1"/>',
+plus:'<path d="M9.5 4.5v10M4.5 9.5h10"/>',
+exit:'<path d="M7 15.5H4.5A1.5 1.5 0 0 1 3 14V5a1.5 1.5 0 0 1 1.5-1.5H7"/><path d="M11.5 12.5 15 9.5l-3.5-3"/><path d="M15 9.5H6.5"/>',
+theme:'<circle cx="9.5" cy="9.5" r="6"/><path d="M9.5 3.5a6 6 0 0 1 0 12z" fill="currentColor" stroke="none"/>'
+};
+// <svg> wrapper shared by every icon: no fill, 1.5px round strokes.
+function ic(n){return '<svg viewBox="0 0 19 19" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(ICON[n]||'')+'</svg>'}
+// Fills every [data-ic] placeholder in the static markup.
+function icons(){document.querySelectorAll('[data-ic]').forEach(function(e){e.innerHTML=ic(e.getAttribute('data-ic'))})}
+icons();
+var root=document.documentElement;function dark(){var t2=root.getAttribute('data-theme');return t2?t2==='dark':matchMedia('(prefers-color-scheme:dark)').matches}
+document.getElementById('tg').onclick=function(){root.setAttribute('data-theme',dark()?'light':'dark')};
+document.getElementById('out').onclick=function(){fetch('logout',{method:'POST',headers:{'X-Gryonix-Auth':'1'}}).then(function(){location.href='login'},function(){location.href='login'})};
+document.getElementById('host').textContent=location.hostname+' · '+t('protected');
+document.getElementById('lbl').textContent=t('services');
+document.getElementById('loading').textContent=t('loading');
+document.getElementById('qrdl').textContent=t('download');
+document.getElementById('qrclose').textContent=t('close');
+document.getElementById('addt').textContent=t('newc');
+document.getElementById('addn').placeholder=t('nameph');
+document.getElementById('addgo').textContent=t('create');
+document.getElementById('addcancel').textContent=t('cancel');
+// Quotes too, not just the three characters that matter in a text node:
+// nearly every use below is inside an ATTRIBUTE, where an unescaped quote ends
+// the attribute and the rest of the name is markup.
+function esc(s){return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function hide(){document.querySelectorAll('.scrim').forEach(function(s){s.classList.remove('show')})}
+document.querySelectorAll('.scrim').forEach(function(s){s.addEventListener('click',function(e){if(e.target===s)hide()})});
+var SVC=[],MAN=[],NOQR=[],addProto=null;
+function ext(p){return p==='openvpn'?'.ovpn':(p==='wireguard'||p==='amneziawg')?'.conf':'.txt'}
+function load(){fetch('api/services').then(function(r){return r.json()}).then(function(d){SVC=d.services||[];MAN=d.manageable||[];NOQR=d.noqr||[];render()})}
+// The client names the QR sheet shows, kept beside the markup rather than
+// inside it. An HTML attribute that carries a JS string literal is two nested
+// contexts, and escaping cannot serve both: the browser un-escapes the
+// attribute BEFORE JavaScript parses it, so an entity for a quote is a quote
+// again by the time it matters. The names never enter that context now — only
+// the ids do, and those are hex or a validated certificate name.
+var NAMES={};
+function render(){var el=document.getElementById('list');if(!SVC.length){el.innerHTML='<div class="empty">'+t('empty')+'</div>';return}
+  Promise.all(SVC.map(function(s){return MAN.indexOf(s.id)>=0?fetch('api/'+s.id+'/clients').then(function(r){return r.json()}).catch(function(){return[]}):Promise.resolve(null)})).then(function(clis){
+  el.innerHTML=SVC.map(function(s,i){var body='';
+    if(MAN.indexOf(s.id)>=0){var cs=clis[i]||[];body=cs.map(function(c){NAMES[s.id+'/'+c.id]=c.name;return '<div class="cli"><b>'+esc(c.name)+'</b><span>'+esc(c.detail||'')+'</span><div class="a">'
+      +'<button class="mini pri" title="QR" aria-label="QR" onclick="showQR(\''+s.id+'\',\''+c.id+'\')">'+ic('qr')+'</button>'
+      +'<a class="mini" href="api/'+s.id+'/clients/'+c.id+'/config?dl=1" download title="'+t('download')+'" aria-label="'+t('download')+'">'+ic('dl')+'</a>'
+      +'<button class="mini dgr" title="'+t('removeq')+'" aria-label="'+t('removeq')+'" onclick="del(\''+s.id+'\',\''+c.id+'\')">'+ic('trash')+'</button>'
+      +'</div></div>'}).join('')+'<button class="add" onclick="openAdd(\''+s.id+'\')">'+ic('plus')+t('add')+'</button>';}
+    else{body='<div class="ro">'+esc(s.endpoint||'')+' — '+t('soon')+'</div>';}
+    // Every protocol but plain WireGuard says so on its own card: its
+    // clients reach the internet but not the admin panels, and without
+    // the line here that ends at a login form that just will not load.
+    var note=s.id==='wireguard'?'':'<div class="ro nb">'+t('wgonly')+'</div>';
+    return '<div class="card"><div class="row"><div class="ic"></div><div><h3>'+esc(s.name)+'</h3><p class="ep">'+esc(s.endpoint||'')+'</p></div><span class="pill">'+t('running')+'</span></div>'+note+body+'</div>'}).join('')})}
+function openAdd(proto){addProto=proto;document.getElementById('addn').value='';document.getElementById('add').classList.add('show');setTimeout(function(){document.getElementById('addn').focus()},60)}
+function showErr(r){return r.json().then(function(d){alert((d&&d.error)||t('reqfail'))},function(){alert(t('reqfail'))})}
+document.getElementById('addgo').onclick=function(){var n=document.getElementById('addn').value.trim()||'client';var b=this;b.disabled=true;
+  fetch('api/'+addProto+'/clients',{method:'POST',headers:{'Content-Type':'application/json','X-Gryonix-Auth':'1'},body:JSON.stringify({name:n})}).then(function(r){b.disabled=false;if(r.ok){hide();load()}else{showErr(r)}},function(){b.disabled=false;alert(t('neterr'))})}
+function del(proto,id){if(!confirm(t('removeq')))return;fetch('api/'+proto+'/clients/'+id,{method:'DELETE',headers:{'X-Gryonix-Auth':'1'}}).then(function(r){if(r.ok){load()}else{showErr(r)}},function(){alert(t('neterr'))})}
+function showQR(proto,id){var name=NAMES[proto+'/'+id]||id;fetch('api/'+proto+'/clients/'+id+'/config').then(function(r){if(!r.ok){return showErr(r).then(function(){throw 0})}return r.text()}).then(function(t){
+  document.getElementById('qrn').textContent=name;document.getElementById('qrt').textContent=t;
+  var img=document.getElementById('qri');
+  if(NOQR.indexOf(proto)>=0){img.style.display='none';img.removeAttribute('src')}
+  else{img.style.display='';img.src='api/'+proto+'/clients/'+id+'/qr'}
+  document.getElementById('qrdl').onclick=function(){location.href='api/'+proto+'/clients/'+id+'/config?dl=1'};
+  document.getElementById('qr').classList.add('show')}).catch(function(){})}
+// Accounts: only administrators get the section at all; the server
+// enforces the same rule, this just keeps the UI honest.
+var ME=null;
+function loadMe(){return fetch('api/me').then(function(r){return r.json()}).then(function(m){ME=m;
+  if(m.role==='superadmin'||m.role==='admin'){document.getElementById('usersec').style.display='';loadUsers();loadMail()}})}
+function loadUsers(){fetch('api/users').then(function(r){return r.ok?r.json():[]}).then(function(us){
+  var el=document.getElementById('users');var h='<div class="card">';
+  us.forEach(function(u){
+    h+='<div class="cli"><b>'+esc(u.username)+'</b><span>'+esc(roleName(u.role))+'</span><div class="a">';
+    if(u.role!=='superadmin'&&u.id!==ME.id){h+='<button class="mini dgr" title="'+t('removeuserq')+'" aria-label="'+t('removeuserq')+'" onclick="delUser(\''+u.id+'\')">'+ic('trash')+'</button>'}
+    h+='</div></div>'});
+  h+='<button class="add" onclick="openAddUser()">'+ic('plus')+t('adduser')+'</button></div>';
+  el.innerHTML=h})}
+function roleName(r){return r==='superadmin'?t('rsuper'):r==='admin'?t('radmin'):t('ruser')}
+function openAddUser(){document.getElementById('aun').value='';document.getElementById('aup').value='';
+  document.getElementById('au').classList.add('show')}
+function delUser(id){if(!confirm(t('removeuserq')))return;
+  fetch('api/users/'+id,{method:'DELETE',headers:{'X-Gryonix-Auth':'1'}}).then(function(r){
+    if(r.ok){loadUsers()}else{showErr(r)}},function(){alert(t('neterr'))})}
+document.getElementById('aut').textContent=t('newuser');
+document.getElementById('aun').placeholder=t('user');
+document.getElementById('aup').placeholder=t('pass');
+document.getElementById('aur').options[0].textContent=t('ruser');
+document.getElementById('aur').options[1].textContent=t('radmin');
+document.getElementById('augo').textContent=t('create');
+document.getElementById('aucancel').textContent=t('cancel');
+document.getElementById('augo').onclick=function(){var b=this;b.disabled=true;
+  fetch('api/users',{method:'POST',headers:{'Content-Type':'application/json','X-Gryonix-Auth':'1'},
+    body:JSON.stringify({username:document.getElementById('aun').value,
+                         password:document.getElementById('aup').value,
+                         role:document.getElementById('aur').value})})
+    .then(function(r){b.disabled=false;if(r.ok){hide();loadUsers()}else{showErr(r)}},
+          function(){b.disabled=false;alert(t('neterr'))})};
+document.getElementById('ulbl').textContent=t('accounts');
+// Mail settings: the sender can be picked from mailcow's mailboxes
+// when mailcow runs here; its password is still typed, because mailcow
+// stores only hashes.
+document.getElementById('mlbl').textContent=t('email');
+document.getElementById('mst').textContent=t('emailsetup');
+document.getElementById('mhost').placeholder=t('smtphost');
+document.getElementById('mport').placeholder=t('smtpport');
+document.getElementById('muser').placeholder=t('user');
+document.getElementById('mpass').placeholder=t('pass');
+document.getElementById('mfrom').placeholder=t('sender');
+document.getElementById('msgo').textContent=t('save');
+document.getElementById('mstest').textContent=t('sendtest');
+document.getElementById('mscancel').textContent=t('cancel');
+function loadMail(){fetch('api/email').then(function(r){return r.ok?r.json():null}).then(function(d){
+  if(!d)return;MAIL=d;var s=d.smtp||{};
+  document.getElementById('msender').textContent=s.sender||t('notset');
+  document.getElementById('mstate').textContent=s.host?s.host+':'+s.port:t('nosmtp');
+  document.getElementById('mhost').value=s.host||'';document.getElementById('mport').value=s.port||587;
+  document.getElementById('msec').value=s.security||'starttls';
+  document.getElementById('muser').value=s.username||'';document.getElementById('mfrom').value=s.sender||'';
+  var sel=document.getElementById('mbox'),hint=document.getElementById('mhint');
+  if(d.mailboxes&&d.mailboxes.length){sel.style.display='';hint.style.display='none';
+    sel.innerHTML='<option value="">'+t('pickbox')+'</option>'+d.mailboxes.map(function(m){
+      return '<option value="'+esc(m)+'">'+esc(m)+'</option>'}).join('');
+    sel.onchange=function(){if(!sel.value)return;
+      document.getElementById('mfrom').value=sel.value;document.getElementById('muser').value=sel.value;
+      if(!document.getElementById('mhost').value){document.getElementById('mhost').value='host.docker.internal';
+        document.getElementById('mport').value=587}}}
+  else{sel.style.display='none';hint.style.display='';hint.textContent=t('nomailboxes')}})}
+var MAIL=null;
+document.getElementById('medit').onclick=function(){document.getElementById('mpass').value='';
+  document.getElementById('ms').classList.add('show')};
+function mailBody(){var b={host:document.getElementById('mhost').value,port:document.getElementById('mport').value,
+  security:document.getElementById('msec').value,username:document.getElementById('muser').value,
+  sender:document.getElementById('mfrom').value};
+  var pw=document.getElementById('mpass').value;if(pw)b.password=pw;return b}
+document.getElementById('msgo').onclick=function(){var b=this;b.disabled=true;
+  fetch('api/email',{method:'PUT',headers:{'Content-Type':'application/json','X-Gryonix-Auth':'1'},
+    body:JSON.stringify(mailBody())}).then(function(r){b.disabled=false;
+      if(r.ok){hide();loadMail()}else{showErr(r)}},function(){b.disabled=false;alert(t('neterr'))})};
+document.getElementById('mstest').onclick=function(){var b=this;b.disabled=true;
+  fetch('api/email',{method:'PUT',headers:{'Content-Type':'application/json','X-Gryonix-Auth':'1'},
+    body:JSON.stringify(mailBody())})
+  .then(function(){return fetch('api/email/test',{method:'POST',headers:{'Content-Type':'application/json','X-Gryonix-Auth':'1'},body:'{}'})})
+  .then(function(r){b.disabled=false;if(r.ok){alert(t('testsent'))}else{showErr(r)}},
+        function(){b.disabled=false;alert(t('neterr'))})};
+load();loadMe();
+</script></body></html>

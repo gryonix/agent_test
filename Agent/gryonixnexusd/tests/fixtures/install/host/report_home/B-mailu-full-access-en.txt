@@ -1,0 +1,50 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "Tunnel:         wg0 -> 203.0.113.10:51820 (full tunnel — outgoing traffic uses the VPS IP)"
+echo "Mail host:      mail.example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo "Backup passphrase (keep it — encrypted backups need it): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Mailu:        https://mail.example.com/admin"
+echo "  Webmail:     https://mail.example.com/webmail"
+echo "  Administrator: admin@example.com"
+echo "  Password (generated on the server): $(grep '^INITIAL_ADMIN_PW=' /opt/mailu/.env | cut -d= -f2-)"
+# The DKIM records, straight from the engine that minted them. Not
+# fatal and not silenced: a missing key is a DNS record the user
+# adds later, not a reason to lose the rest of the report.
+echo "  Mail clients: IMAP 993 and SMTP 465, both with TLS (ports 143 and 587 are not served)"
+echo "  DKIM records (add them to DNS):"
+/opt/gryonixnexus-mailu-dkim.sh 2>/dev/null | grep '^GRYONIXNEXUS_DKIM ' | while read -r _ NAME VALUE; do
+  echo "    $NAME TXT $VALUE"
+done || echo "    not ready yet — open Domains in the Mailu admin UI to see the DKIM record"
+echo "Vaultwarden:  https://vault.example.com"
+echo "  Admin panel: https://vault.example.com/admin"
+echo "  Admin token (generated on the server): $(grep '^ADMIN_TOKEN=' /opt/vaultwarden/.env | cut -d= -f2-)"
+echo "  Sign-in: open the URL and create your own account (your email + a master password you choose). The admin token above is only for the /admin panel."
+echo "  Signups: open"
+echo "Nextcloud:    https://files.example.com"
+echo "  Administrator: admin"
+echo "  Password (generated on the server): $(grep '^NEXTCLOUD_ADMIN_PASSWORD=' /opt/nextcloud/.env | cut -d= -f2-)"
+echo "Immich:       https://photos.example.com"
+echo "  IMPORTANT: open this URL right now and create the administrator — until then, anyone who opens the page can register."
+echo "Forgejo:      https://git.example.com"
+echo "  Administrator: admin"
+echo "  Password (generated on the server): $(grep '^FORGEJO_ADMIN_PASSWORD=' /opt/forgejo/.env | cut -d= -f2-)"
+echo "  Registration is closed — add further users in Site Administration."
+echo "  Git over SSH: port 2222 — git clone ssh://git@git.example.com:2222/user/repo.git"
+echo "VPN Panel: https://vpn.example.com"
+echo "  Admin panel: https://vpn.example.com"
+echo "  Administrator: $(grep '^ADMIN_USER=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Password (generated on the server): $(grep '^ADMIN_PASSWORD=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Add client devices in the panel: it generates their configs and QR codes."
+

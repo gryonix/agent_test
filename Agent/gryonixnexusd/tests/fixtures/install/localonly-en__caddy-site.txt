@@ -1,0 +1,6 @@
+dns.home.local {
+    # gryonixnexus: adguard-home
+    tls internal
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:8087
+}

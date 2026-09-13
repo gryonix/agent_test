@@ -1,0 +1,8 @@
+echo "Headscale: https://mesh.example.com"
+echo "  Этот адрес — управляющий сервер для ваших устройств, а не веб-страница"
+echo "  Заведите пользователя и ключ подключения на сервере:"
+echo "    sudo docker exec headscale headscale users create <name>"
+echo "    sudo docker exec headscale headscale preauthkeys create --user <id> --reusable --expiration 24h"
+echo "  Затем подключите каждое устройство официальным клиентом Tailscale:"
+echo "    tailscale up --login-server https://mesh.example.com --authkey <key>"
+echo "  Устройства находят друг друга по имени: <device>.ts.example.com"

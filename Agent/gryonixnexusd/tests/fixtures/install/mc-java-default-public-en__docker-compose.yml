@@ -1,0 +1,39 @@
+services:
+  minecraft-java:
+    image: itzg/minecraft-server:2026.8.1-java25
+    container_name: minecraft-java
+    restart: unless-stopped
+    # The server reads commands from its own stdin, and that is how
+    # both a clean stop and the panel's console work. Without these
+    # two the container can only be killed, which is how a world
+    # gets corrupted.
+    stdin_open: true
+    tty: true
+    environment:
+      EULA: "TRUE"
+      TYPE: "PAPER"
+      MEMORY: "2048M"
+      # Enabled so the panel and the backup wrapper can ask a
+      # RUNNING server to flush its world before anything reads it.
+      ENABLE_RCON: "true"
+      RCON_PASSWORD: "${RCON_PASSWORD}"
+    volumes:
+      - /opt/minecraft-java/data:/data
+      # The image's own drop-in directories, and this is where an
+      # uploaded file lands: content here is SYNCHRONISED into
+      # /data/mods (and /data/plugins) at every start, so a jar the
+      # owner sent from the app survives a restart, an image update
+      # and every change to the Modrinth list — which manages only
+      # what it installed itself. Read-only: the server has no
+      # business writing back into what somebody uploaded.
+      #
+      # Both, always, because the answer to "mods or plugins?" is
+      # the TYPE, and the TYPE is a setting that can change on a
+      # server that already exists.
+      - /opt/minecraft-java/mods:/mods:ro
+      - /opt/minecraft-java/plugins:/plugins:ro
+    ports:
+      - "25565:25565"
+      # RCON stays on loopback: its password is the whole of its
+      # security, and the panel reaches it from the same host.
+      - "127.0.0.1:25575:25575"

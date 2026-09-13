@@ -1,0 +1,30 @@
+
+log "ОТЧЁТ"
+echo "Домен:          example.com"
+echo "Туннель:        wg0 -> 203.0.113.10:51820 (полный туннель — исходящий трафик с IP VPS)"
+echo "Почтовый хост:  mail.example.com"
+echo "PTR у провайдера: 203.0.113.10 -> relay.example.com (критично для доставляемости)."
+echo "Пароль бэкапов (сохраните — без него не восстановить шифрованный бэкап): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Статус сервисов:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Не забудьте DNS-записи из dns-records.txt — без них Caddy не выпустит сертификаты."
+
+echo
+echo "=== ДОСТУПЫ СЕРВИСОВ (сохраните) ==="
+echo "Mailu:        https://mail.example.com/admin"
+echo "  Веб-почта:     https://mail.example.com/webmail"
+echo "  Администратор: admin@example.com"
+echo "  Пароль (сгенерирован на сервере): $(grep '^INITIAL_ADMIN_PW=' /opt/mailu/.env | cut -d= -f2-)"
+# The DKIM records, straight from the engine that minted them. Not
+# fatal and not silenced: a missing key is a DNS record the user
+# adds later, not a reason to lose the rest of the report.
+echo "  Почтовые клиенты: IMAP 993 и SMTP 465, оба с TLS (порты 143 и 587 не обслуживаются)"
+echo "  DKIM-записи (добавьте их в DNS):"
+/opt/gryonixnexus-mailu-dkim.sh 2>/dev/null | grep '^GRYONIXNEXUS_DKIM ' | while read -r _ NAME VALUE; do
+  echo "    $NAME TXT $VALUE"
+done || echo "    ещё не готово — откройте Domains в админке Mailu, чтобы увидеть DKIM-запись"
+

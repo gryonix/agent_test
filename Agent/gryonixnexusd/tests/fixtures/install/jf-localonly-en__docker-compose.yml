@@ -1,0 +1,16 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.11.11
+    container_name: jellyfin
+    restart: unless-stopped
+    environment:
+      # Jellyfin builds absolute URLs for clients from this.
+      JELLYFIN_PublishedServerUrl: "https://media.home.local"
+    volumes:
+      - /opt/jellyfin/config:/config
+      - /opt/jellyfin/cache:/cache
+      # Read-only: a media server has no business writing to the
+      # library, and a mistake in the UI would delete originals.
+      - /srv/media:/media:ro
+    ports:
+      - "127.0.0.1:8096:8096"

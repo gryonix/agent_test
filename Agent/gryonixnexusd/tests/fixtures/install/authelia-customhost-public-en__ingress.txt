@@ -1,0 +1,4 @@
+hostname=login.example.com
+upstreamPort=8094
+adminGuard=false
+upstreamHTTPS=false

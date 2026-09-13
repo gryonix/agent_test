@@ -1,0 +1,33 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo "Backup passphrase (keep it — encrypted backups need it): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Vaultwarden:  https://vault.example.com"
+echo "  Admin panel: https://vault.example.com/admin"
+echo "  Admin token (generated on the server): $(grep '^ADMIN_TOKEN=' /opt/vaultwarden/.env | cut -d= -f2-)"
+echo "  Sign-in: open the URL and create your own account (your email + a master password you choose). The admin token above is only for the /admin panel."
+echo "  Signups: open"
+echo "OpenVPN: vpn.example.com:1194 (UDP)"
+echo "  Client profile (.ovpn) — copy everything between the markers into a file and import it:"
+echo "  ----- BEGIN gryonixnexus.ovpn -----"
+cat /opt/openvpn/gryonixnexus.ovpn
+echo "  ----- END gryonixnexus.ovpn -----"
+echo "  Import the .ovpn into OpenVPN Connect (iOS/Android/desktop). The same profile can be downloaded later from the Files tab."
+echo "  Note: the admin panels (mail, cloud, photos, vault) are reachable ONLY over WireGuard — add a WireGuard client in the VPN panel and connect with it to manage them. AmneziaWG and this protocol are for general internet access; they do not reach the admin panels."
+echo "VPN Panel: https://vpn.example.com"
+echo "  Admin panel: https://vpn.example.com"
+echo "  Administrator: $(grep '^ADMIN_USER=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Password (generated on the server): $(grep '^ADMIN_PASSWORD=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Add client devices in the panel: it generates their configs and QR codes."
+

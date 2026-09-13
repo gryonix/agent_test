@@ -1,0 +1,208 @@
+log "Mailcow: installing into /srv/mailcow"
+if [ ! -d "/srv/mailcow/.git" ]; then
+  git clone https://github.com/mailcow/mailcow-dockerized /srv/mailcow
+fi
+cd /srv/mailcow
+if [ ! -f mailcow.conf ]; then
+  # Non-interactive config: hostname/timezone/branch via env. The env
+  # vars do NOT cover everything: on low-memory hosts (≤ 2.5 GiB) the
+  # script still prompts "disable ClamAV? [Y/n]" (and similar) from
+  # stdin, hanging a headless run. Feed a bounded set of yes-answers:
+  # unexpected prompts read them (or hit EOF → their default), and a
+  # bounded printf can't die of SIGPIPE under pipefail.
+  # COMPOSE_VERSION: generate_config.sh does not detect the compose
+  # flavour, it only substitutes this variable into mailcow.conf. We
+  # install the compose plugin, so it is always "native".
+  printf 'y\ny\ny\n' | COMPOSE_VERSION=native MAILCOW_HOSTNAME=mail.example.com MAILCOW_TZ=UTC MAILCOW_BRANCH=master ./generate_config.sh
+  # Behind the shared Caddy ingress: web UI on loopback only.
+  sed -i 's/^HTTP_BIND=.*/HTTP_BIND=127.0.0.1/' mailcow.conf
+  sed -i 's/^HTTP_PORT=.*/HTTP_PORT=8080/' mailcow.conf
+  sed -i 's/^HTTPS_BIND=.*/HTTPS_BIND=127.0.0.1/' mailcow.conf
+  sed -i 's/^HTTPS_PORT=.*/HTTPS_PORT=18443/' mailcow.conf
+  # TLS terminates at Caddy; mailcow must not fight for ACME.
+  sed -i 's/^SKIP_LETS_ENCRYPT=.*/SKIP_LETS_ENCRYPT=y/' mailcow.conf
+fi
+# Left empty, DOCKER_COMPOSE_VERSION takes every mailcow helper that
+# reads it down with it: `backup_and_restore.sh restore` aborts with
+# "Can not read DOCKER_COMPOSE_VERSION variable from mailcow.conf"
+# BEFORE unpacking anything, so the restore wrapper reports failure
+# having restored nothing (update.sh is safe — it unsets and re-detects
+# the value itself). Repaired here, outside the `if` above, because the
+# conf is generated exactly once: servers installed before this fix are
+# only reachable through a setup re-run, which is how sudoers and
+# wrapper changes already reach them.
+if grep -q '^DOCKER_COMPOSE_VERSION=' mailcow.conf; then
+  sed -i 's/^DOCKER_COMPOSE_VERSION=.*/DOCKER_COMPOSE_VERSION=native/' mailcow.conf
+else
+  echo 'DOCKER_COMPOSE_VERSION=native' >> mailcow.conf
+fi
+# A clone made under a tight umask stays broken forever without this:
+# git has no mode flag, and a re-run skips the clone (.git is already
+# there). mailcow's containers drop to their own users — nginx's config
+# says `user nginx` — and mount this tree, so root-only modes make the
+# worker fail to even traverse /web and every PHP path answers a bare
+# nginx 404, the whole API included. mailcow.conf keeps 600: it holds
+# the database passwords.
+chmod -R a+rX .
+chmod 600 mailcow.conf
+# Pull/up wrapped in retry: on a fresh public server the first pull of
+# mailcow's ~15 images often trips a transient registry timeout, which
+# under `set -e` aborted the install and forced a manual Retry.
+retry 4 docker compose pull -q
+retry 2 docker compose up -d
+cd /srv/mailcow
+# Enable the REST API once (key generated on this server, kept by
+# re-runs). docker-compose passes API_KEY/API_ALLOW_FROM into the php
+# container; the last assignment in the .env-style file wins, so
+# appending works even next to the commented template lines.
+if ! grep -q '^API_KEY=' mailcow.conf; then
+  # The caller is the host reaching the published port, so mailcow's
+  # nginx sees the connection arrive from its own bridge gateway — .1
+  # of whatever IPV4_NETWORK generate_config.sh settled on. That is
+  # 172.22.1 by default but NOT always: the generator moves the subnet
+  # when it collides with a docker network that already exists, and a
+  # hardcoded gateway then fails the API's IP ACL with an "api access
+  # denied for ip" that reads exactly like a wrong key.
+  MC_NET="$(grep '^IPV4_NETWORK=' mailcow.conf | tail -n1 | cut -d= -f2- | tr -d '[:space:]')"
+  printf 'API_KEY=%s\nAPI_ALLOW_FROM=%s.1,127.0.0.1\n' \
+    "$(openssl rand -hex 20)" "${MC_NET:-172.22.1}" >> mailcow.conf
+  docker compose up -d
+fi
+MC_API_KEY="$(grep '^API_KEY=' mailcow.conf | tail -n1 | cut -d= -f2-)"
+MC_API="https://127.0.0.1:18443/api/v1"
+MC_BODY="$(mktemp)"
+MC_CODE=000
+# The API lives on the HTTPS vhost. mailcow's HTTP port 301-redirects
+# to it unconditionally, and curl without -L returns the redirect's
+# HTML body instead of JSON — so every call over HTTP silently failed
+# (jq found no fields), add/domain and add/dkim never ran, and DKIM was
+# reported "not ready" forever. Hit HTTPS directly, -k for self-signed.
+#
+# Status into a variable, body into a file, and never a non-zero exit.
+# With `curl -f` the only thing that reached the install log was
+# "curl: (22) The requested URL returned error: 404": the body — which
+# is mailcow's own reason for refusing ("route not found",
+# "authentication failed", "Cannot find attributes in post data") — was
+# discarded, so the failure was undiagnosable, and the bare exit status
+# killed the entire 22-step install under `set -e` at step 7, before
+# the other services and before the install key was revoked.
+mc_api() {
+  MC_CODE="$(curl -sSk --max-time 20 -o "$MC_BODY" -w '%{http_code}' \
+    -H "X-API-Key: $MC_API_KEY" -H "Content-Type: application/json" "$@")" || :
+  case "$MC_CODE" in ''|*[!0-9]*) MC_CODE=000 ;; esac
+  [ "$MC_CODE" -ge 200 ] && [ "$MC_CODE" -lt 300 ]
+}
+# Why the last call failed, in one bounded line: an HTML error page
+# instead of JSON must not flood the log the app streams.
+mc_why() { printf 'HTTP %s %s' "$MC_CODE" "$(tr -d '\r\n' < "$MC_BODY" | cut -c1-300)"; }
+log "Mailcow: adding domain example.com and its DKIM key over the API"
+# A deadline rather than a fixed number of tries: each attempt can
+# itself burn the 20 s curl timeout, so counting attempts bounded this
+# wait at 25 minutes of total silence, not the 5 it was meant to be.
+MC_READY=0
+MC_TRY=0
+MC_DEADLINE=$(($(date +%s) + 300))
+while [ "$(date +%s)" -lt "$MC_DEADLINE" ]; do
+  if mc_api "$MC_API/get/domain/all"; then MC_READY=1; break; fi
+  # Heartbeat every ~30 s. The API needs a while after the containers
+  # report healthy, and a wait that prints nothing at all is
+  # indistinguishable from a hung install in the app's progress view.
+  MC_TRY=$((MC_TRY + 1))
+  if [ "$((MC_TRY % 6))" -eq 0 ]; then
+    log "Mailcow: waiting for the API to come up ($(mc_why))"
+  fi
+  sleep 5
+done
+if [ "$MC_READY" -eq 1 ]; then
+  # Every mail domain (the primary one plus any additional
+  # domains) with its own DKIM key. Both steps are idempotent — created
+  # only when missing, so re-runs never touch an existing configuration,
+  # and a domain removed from the app is left alone on the server rather
+  # than deleted with its mailboxes.
+  # The list is fed through a here-document rather than a quoted word
+  # list: it reads the names literally, so no shell quoting question
+  # arises at all, and it stays the same shape for one domain or ten.
+  while IFS= read -r MC_DOMAIN; do
+    [ -n "$MC_DOMAIN" ] || continue
+    if ! mc_api "$MC_API/get/domain/$MC_DOMAIN" || ! jq -e '.domain_name' < "$MC_BODY" >/dev/null 2>&1; then
+      mc_api -X POST -d "{\"domain\":\"$MC_DOMAIN\",\"description\":\"Managed by gryonixNexus\",\"aliases\":\"400\",\"defquota\":\"3072\",\"maxquota\":\"10240\",\"quota\":\"10240\",\"mailboxes\":\"50\",\"active\":\"1\",\"restart_sogo\":\"10\"}" \
+        "$MC_API/add/domain" \
+        || log "Mailcow: could not add domain $MC_DOMAIN over the API — add it under Configuration → Domains in the admin UI. ($(mc_why))"
+    fi
+    if ! mc_api "$MC_API/get/dkim/$MC_DOMAIN" || ! jq -e '.pubkey' < "$MC_BODY" >/dev/null 2>&1; then
+      mc_api -X POST -d "{\"domains\":\"$MC_DOMAIN\",\"dkim_selector\":\"dkim\",\"key_size\":2048}" \
+        "$MC_API/add/dkim" \
+        || log "Mailcow: could not create the DKIM key for $MC_DOMAIN over the API — create it under Configuration → ARC/DKIM keys in the admin UI. ($(mc_why))"
+    fi
+  done <<'EOF_MC_DOMAINS'
+example.com
+EOF_MC_DOMAINS
+else
+  log "Mailcow: the API did not answer — the domain and DKIM key were NOT created. Mailcow itself is running: add the domain under Configuration → Domains in its admin UI, or re-run the setup. ($(mc_why))"
+fi
+rm -f "$MC_BODY"
+# Automatic trusted TLS for SMTP/IMAPS. Caddy fronts only the web UI;
+# mailcow's mail daemons (Postfix/Dovecot) serve their OWN certificate,
+# so without this they present a self-signed one and mail clients warn.
+# Sync Caddy's issued certificate for mail.example.com into mailcow's ssl
+# assets and reload the mail daemons — once now (a no-op until Caddy has
+# issued it) and then on a timer so renewals are picked up automatically.
+cat > /opt/gryonixnexus-mailcow-cert-sync.sh <<'EOF_MC_CERTSYNC'
+#!/bin/bash
+set -eu
+DOMAIN="mail.example.com"
+MAILCOW="/srv/mailcow"
+DEST="$MAILCOW/data/assets/ssl"
+CADDY_DATA="/var/lib/caddy/.local/share/caddy/certificates"
+SRC_CRT="$(find "$CADDY_DATA" -type f -name "${DOMAIN}.crt" 2>/dev/null | head -n1)"
+SRC_KEY="$(find "$CADDY_DATA" -type f -name "${DOMAIN}.key" 2>/dev/null | head -n1)"
+if [ -z "$SRC_CRT" ] || [ -z "$SRC_KEY" ]; then exit 0; fi
+if cmp -s "$SRC_CRT" "$DEST/cert.pem" && cmp -s "$SRC_KEY" "$DEST/key.pem"; then exit 0; fi
+cp "$SRC_CRT" "$DEST/cert.pem"
+cp "$SRC_KEY" "$DEST/key.pem"
+cd "$MAILCOW"
+docker compose restart postfix-mailcow dovecot-mailcow nginx-mailcow >/dev/null 2>&1 || true
+EOF_MC_CERTSYNC
+chmod 700 /opt/gryonixnexus-mailcow-cert-sync.sh
+cat > /etc/systemd/system/gryonixnexus-mailcow-cert-sync.service <<'EOF_MC_CERTSVC'
+[Unit]
+Description=Sync Caddy TLS certificate into Mailcow (SMTP/IMAPS)
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/gryonixnexus-mailcow-cert-sync.sh
+EOF_MC_CERTSVC
+cat > /etc/systemd/system/gryonixnexus-mailcow-cert-sync.timer <<'EOF_MC_CERTTIMER'
+[Unit]
+Description=Periodic Caddy to Mailcow TLS certificate sync
+[Timer]
+OnActiveSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF_MC_CERTTIMER
+systemctl daemon-reload
+systemctl enable --now gryonixnexus-mailcow-cert-sync.timer >/dev/null 2>&1 || true
+/opt/gryonixnexus-mailcow-cert-sync.sh || true
+# Root-owned read-only DKIM dump for the dashboard's configuration
+# export. mailcow mints the key on the server (never on the device), so
+# the app re-reads it here on demand. It reads the API key from
+# mailcow.conf — hence root — and prints one machine-readable marker
+# line per mail domain; whitelisted in sudoers via extraSudoers. The
+# here-doc is quoted so nothing inside is shell-expanded at write time.
+cat > /opt/gryonixnexus-dkim.sh <<'EOF_GD_DKIM'
+#!/bin/bash
+set -euo pipefail
+CONF="/srv/mailcow/mailcow.conf"
+[ -r "$CONF" ] || { echo "GRYONIXNEXUS_DKIM_DONE"; exit 0; }
+MC_KEY="$(grep '^API_KEY=' "$CONF" | tail -n1 | cut -d= -f2-)"
+API="https://127.0.0.1:18443/api/v1"
+mc() { curl -fsSk --max-time 20 -H "X-API-Key: $MC_KEY" "$@"; }
+for D in $(mc "$API/get/domain/all" 2>/dev/null | jq -r '.[].domain_name // empty' 2>/dev/null || true); do
+  TXT="$(mc "$API/get/dkim/$D" 2>/dev/null | jq -r '.dkim_txt // empty' 2>/dev/null || true)"
+  if [ -n "$TXT" ]; then echo "GRYONIXNEXUS_DKIM dkim._domainkey.$D $TXT"; fi
+done
+echo "GRYONIXNEXUS_DKIM_DONE"
+EOF_GD_DKIM
+chmod 750 /opt/gryonixnexus-dkim.sh

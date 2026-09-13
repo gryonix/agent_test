@@ -1,0 +1,4 @@
+hostname=gitlab.other-company.net
+upstreamPort=8084
+adminGuard=true
+upstreamHTTPS=false

@@ -1,0 +1,5 @@
+hostname=claw.example.com
+upstreamPort=8102
+adminGuard=true
+upstreamHTTPS=false
+publicPaths=

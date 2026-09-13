@@ -1,0 +1,16 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    container_name: qdrant
+    restart: unless-stopped
+    environment:
+      # Read from the shared key file by the setup step below. Set
+      # here rather than baked into a config file so that rotating
+      # it is one file and one restart.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    volumes:
+      - /opt/qdrant/storage:/qdrant/storage
+    ports:
+      # Loopback, and only the REST port. The dashboard rides on
+      # the same port; whoever reaches it has the documents.
+      - "127.0.0.1:6333:6333"

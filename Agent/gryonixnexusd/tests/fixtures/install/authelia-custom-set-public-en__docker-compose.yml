@@ -1,0 +1,16 @@
+services:
+  authelia:
+    image: ghcr.io/authelia/authelia:4.39.20
+    container_name: authelia
+    restart: unless-stopped
+    environment:
+      # The 4.39 names. Every one of them can also be given in the
+      # file; they are here so the file itself carries no secret
+      # and can be read by whoever debugs a login failure.
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET: ${AUTHELIA_JWT_SECRET}
+      AUTHELIA_SESSION_SECRET: ${AUTHELIA_SESSION_SECRET}
+      AUTHELIA_STORAGE_ENCRYPTION_KEY: ${AUTHELIA_STORAGE_ENCRYPTION_KEY}
+    volumes:
+      - /opt/authelia/config:/config
+    ports:
+      - "127.0.0.1:8094:9091"

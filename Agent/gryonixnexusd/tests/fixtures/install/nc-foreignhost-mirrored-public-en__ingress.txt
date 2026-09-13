@@ -1,0 +1,4 @@
+hostname=cloud.other-company.net
+upstreamPort=8081
+adminGuard=true
+upstreamHTTPS=false

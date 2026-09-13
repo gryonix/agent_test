@@ -1,0 +1,4 @@
+hostname=dns.other-company.net
+upstreamPort=8092
+adminGuard=true
+upstreamHTTPS=false

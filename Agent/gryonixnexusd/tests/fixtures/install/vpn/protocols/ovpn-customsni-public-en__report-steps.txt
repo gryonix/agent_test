@@ -1,0 +1,7 @@
+echo "OpenVPN: vpn.example.com:1194 (UDP)"
+echo "  Client profile (.ovpn) — copy everything between the markers into a file and import it:"
+echo "  ----- BEGIN gryonixnexus.ovpn -----"
+cat /opt/openvpn/gryonixnexus.ovpn
+echo "  ----- END gryonixnexus.ovpn -----"
+echo "  Import the .ovpn into OpenVPN Connect (iOS/Android/desktop). The same profile can be downloaded later from the Files tab."
+echo "  Note: the admin panels (mail, cloud, photos, vault) are reachable ONLY over WireGuard — add a WireGuard client in the VPN panel and connect with it to manage them. AmneziaWG and this protocol are for general internet access; they do not reach the admin panels."

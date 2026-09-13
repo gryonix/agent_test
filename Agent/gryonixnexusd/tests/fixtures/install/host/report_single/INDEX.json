@@ -1,0 +1,197 @@
+{
+ "A-adguard-access-en": [
+  "A-adguard-access-en",
+  "A-adguard-noaccess-en"
+ ],
+ "A-adguard-access-ru": [
+  "A-adguard-access-ru",
+  "A-adguard-noaccess-ru"
+ ],
+ "A-adguard-full-access-en": [
+  "A-adguard-full-access-en",
+  "A-adguard-full-noaccess-en"
+ ],
+ "A-adguard-full-access-ru": [
+  "A-adguard-full-access-ru",
+  "A-adguard-full-noaccess-ru"
+ ],
+ "A-bare-access-en": [
+  "A-bare-access-en",
+  "A-bare-noaccess-en"
+ ],
+ "A-bare-access-ru": [
+  "A-bare-access-ru",
+  "A-bare-noaccess-ru"
+ ],
+ "A-dms-access-en": [
+  "A-dms-access-en",
+  "A-dms-noaccess-en"
+ ],
+ "A-dms-access-ru": [
+  "A-dms-access-ru",
+  "A-dms-noaccess-ru"
+ ],
+ "A-dms-full-access-en": [
+  "A-dms-full-access-en",
+  "A-dms-full-noaccess-en"
+ ],
+ "A-dms-full-access-ru": [
+  "A-dms-full-access-ru",
+  "A-dms-full-noaccess-ru"
+ ],
+ "A-jellyfin-access-en": [
+  "A-jellyfin-access-en",
+  "A-jellyfin-noaccess-en"
+ ],
+ "A-jellyfin-access-ru": [
+  "A-jellyfin-access-ru",
+  "A-jellyfin-noaccess-ru"
+ ],
+ "A-jellyfin-full-access-en": [
+  "A-jellyfin-full-access-en",
+  "A-jellyfin-full-noaccess-en"
+ ],
+ "A-jellyfin-full-access-ru": [
+  "A-jellyfin-full-access-ru",
+  "A-jellyfin-full-noaccess-ru"
+ ],
+ "A-mailcow-access-en": [
+  "A-mailcow-access-en",
+  "A-mailcow-noaccess-en"
+ ],
+ "A-mailcow-access-ru": [
+  "A-mailcow-access-ru",
+  "A-mailcow-noaccess-ru"
+ ],
+ "A-mailcow-awg-access-en": [
+  "A-mailcow-awg-access-en",
+  "A-mailcow-awg-noaccess-en"
+ ],
+ "A-mailcow-awg-access-ru": [
+  "A-mailcow-awg-access-ru",
+  "A-mailcow-awg-noaccess-ru"
+ ],
+ "A-mailcow-wg-access-en": [
+  "A-mailcow-wg-access-en",
+  "A-mailcow-wg-noaccess-en"
+ ],
+ "A-mailcow-wg-access-ru": [
+  "A-mailcow-wg-access-ru",
+  "A-mailcow-wg-noaccess-ru"
+ ],
+ "A-mailcow-xray-access-en": [
+  "A-mailcow-xray-access-en",
+  "A-mailcow-xray-noaccess-en"
+ ],
+ "A-mailcow-xray-access-ru": [
+  "A-mailcow-xray-access-ru",
+  "A-mailcow-xray-noaccess-ru"
+ ],
+ "A-mailu-access-en": [
+  "A-mailu-access-en",
+  "A-mailu-noaccess-en"
+ ],
+ "A-mailu-access-ru": [
+  "A-mailu-access-ru",
+  "A-mailu-noaccess-ru"
+ ],
+ "A-mailu-full-access-en": [
+  "A-mailu-full-access-en",
+  "A-mailu-full-noaccess-en"
+ ],
+ "A-mailu-full-access-ru": [
+  "A-mailu-full-access-ru",
+  "A-mailu-full-noaccess-ru"
+ ],
+ "A-multidomain": [
+  "A-multidomain"
+ ],
+ "A-nomail-access-en": [
+  "A-nomail-access-en",
+  "A-nomail-noaccess-en"
+ ],
+ "A-nomail-access-ru": [
+  "A-nomail-access-ru",
+  "A-nomail-noaccess-ru"
+ ],
+ "A-nomail-ovpn-access-en": [
+  "A-nomail-ovpn-access-en",
+  "A-nomail-ovpn-noaccess-en"
+ ],
+ "A-nomail-ovpn-access-ru": [
+  "A-nomail-ovpn-access-ru",
+  "A-nomail-ovpn-noaccess-ru"
+ ],
+ "A-nomail-ss-access-en": [
+  "A-nomail-ss-access-en",
+  "A-nomail-ss-noaccess-en"
+ ],
+ "A-nomail-ss-access-ru": [
+  "A-nomail-ss-access-ru",
+  "A-nomail-ss-noaccess-ru"
+ ],
+ "A-passbolt-access-en": [
+  "A-passbolt-access-en",
+  "A-passbolt-noaccess-en"
+ ],
+ "A-passbolt-access-ru": [
+  "A-passbolt-access-ru",
+  "A-passbolt-noaccess-ru"
+ ],
+ "A-passwords-shelf-access-en": [
+  "A-passwords-shelf-access-en",
+  "A-passwords-shelf-noaccess-en"
+ ],
+ "A-passwords-shelf-access-ru": [
+  "A-passwords-shelf-access-ru",
+  "A-passwords-shelf-noaccess-ru"
+ ],
+ "A-photoprism-access-en": [
+  "A-photoprism-access-en",
+  "A-photoprism-noaccess-en"
+ ],
+ "A-photoprism-access-ru": [
+  "A-photoprism-access-ru",
+  "A-photoprism-noaccess-ru"
+ ],
+ "A-photoprism-immich-access-en": [
+  "A-photoprism-immich-access-en",
+  "A-photoprism-immich-noaccess-en"
+ ],
+ "A-photoprism-immich-access-ru": [
+  "A-photoprism-immich-access-ru",
+  "A-photoprism-immich-noaccess-ru"
+ ],
+ "A-psono-access-en": [
+  "A-psono-access-en",
+  "A-psono-noaccess-en"
+ ],
+ "A-psono-access-ru": [
+  "A-psono-access-ru",
+  "A-psono-noaccess-ru"
+ ],
+ "A-psono-vaultwarden-access-en": [
+  "A-psono-vaultwarden-access-en",
+  "A-psono-vaultwarden-noaccess-en"
+ ],
+ "A-psono-vaultwarden-access-ru": [
+  "A-psono-vaultwarden-access-ru",
+  "A-psono-vaultwarden-noaccess-ru"
+ ],
+ "A-seafile-access-en": [
+  "A-seafile-access-en",
+  "A-seafile-noaccess-en"
+ ],
+ "A-seafile-access-ru": [
+  "A-seafile-access-ru",
+  "A-seafile-noaccess-ru"
+ ],
+ "A-seafile-nextcloud-access-en": [
+  "A-seafile-nextcloud-access-en",
+  "A-seafile-nextcloud-noaccess-en"
+ ],
+ "A-seafile-nextcloud-access-ru": [
+  "A-seafile-nextcloud-access-ru",
+  "A-seafile-nextcloud-noaccess-ru"
+ ]
+}

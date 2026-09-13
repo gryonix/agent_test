@@ -1,0 +1,4 @@
+hostname=git.example.com
+upstreamPort=8084
+adminGuard=true
+upstreamHTTPS=false

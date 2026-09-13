@@ -1,0 +1,5 @@
+auth.home.local {
+    # gryonixnexus: authelia
+    tls internal
+    reverse_proxy 127.0.0.1:8094
+}

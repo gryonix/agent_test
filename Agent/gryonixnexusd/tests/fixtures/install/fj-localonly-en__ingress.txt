@@ -1,0 +1,4 @@
+hostname=git.home.local
+upstreamPort=8083
+adminGuard=true
+upstreamHTTPS=false

@@ -1,0 +1,2 @@
+8388/tcp Shadowsocks
+8388/udp Shadowsocks

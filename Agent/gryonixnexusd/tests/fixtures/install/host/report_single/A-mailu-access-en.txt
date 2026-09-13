@@ -1,0 +1,29 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "Mail host:      mail.example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo "Backup passphrase (keep it — encrypted backups need it): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Mailu:        https://mail.example.com/admin"
+echo "  Webmail:     https://mail.example.com/webmail"
+echo "  Administrator: admin@example.com"
+echo "  Password (generated on the server): $(grep '^INITIAL_ADMIN_PW=' /opt/mailu/.env | cut -d= -f2-)"
+# The DKIM records, straight from the engine that minted them. Not
+# fatal and not silenced: a missing key is a DNS record the user
+# adds later, not a reason to lose the rest of the report.
+echo "  Mail clients: IMAP 993 and SMTP 465, both with TLS (ports 143 and 587 are not served)"
+echo "  DKIM records (add them to DNS):"
+/opt/gryonixnexus-mailu-dkim.sh 2>/dev/null | grep '^GRYONIXNEXUS_DKIM ' | while read -r _ NAME VALUE; do
+  echo "    $NAME TXT $VALUE"
+done || echo "    not ready yet — open Domains in the Mailu admin UI to see the DKIM record"
+

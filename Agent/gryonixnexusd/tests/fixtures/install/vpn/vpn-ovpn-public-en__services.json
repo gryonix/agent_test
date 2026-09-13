@@ -1,0 +1,1 @@
+{"services":[{"id":"openvpn","name":"OpenVPN","endpoint":"vpn.example.com:1194 · UDP","host":"vpn.example.com","port":"1194"}]}

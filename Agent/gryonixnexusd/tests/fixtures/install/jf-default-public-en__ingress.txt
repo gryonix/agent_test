@@ -1,0 +1,4 @@
+hostname=media.example.com
+upstreamPort=8096
+adminGuard=true
+upstreamHTTPS=false

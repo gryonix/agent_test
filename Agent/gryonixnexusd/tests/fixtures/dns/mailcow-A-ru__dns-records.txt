@@ -1,0 +1,60 @@
+; DNS-записи для example.com — добавьте у вашего DNS-провайдера.
+; Формат: имя  тип  значение
+
+; ЧТО ДОБАВИТЬ — один блок ниже = одна запись в форме вашего регистратора
+;
+;   Тип: A
+;   Имя: mail   — большинство панелей ждут просто mail — некоторые полное mail.example.com
+;   Значение: 203.0.113.10
+;   TTL: Авто (или 3600)
+;
+;   Тип: MX
+;   Имя: @   — сам домен — впишите @ (некоторые панели хотят example.com)
+;   Значение: mail.example.com
+;   Приоритет: 10
+;   TTL: Авто (или 3600)
+;
+;   Тип: TXT
+;   Имя: @   — сам домен — впишите @ (некоторые панели хотят example.com)
+;   Значение: v=spf1 mx -all
+;   TTL: Авто (или 3600)
+;
+;   Тип: TXT
+;   Имя: _dmarc   — большинство панелей ждут просто _dmarc — некоторые полное _dmarc.example.com
+;   Значение: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com
+;   TTL: Авто (или 3600)
+;
+;   Тип: A
+;   Имя: relay   — большинство панелей ждут просто relay — некоторые полное relay.example.com
+;   Значение: 203.0.113.10
+;   TTL: Авто (или 3600)
+;
+; Cloudflare: у КАЖДОЙ записи здесь поставьте Proxy status = «DNS only» (серое облако). Оранжевое облако ломает почту и VPN.
+;
+; ИМПОРТ ВМЕСТО РУЧНОГО ВВОДА
+; Cloudflare: DNS → Records → «Import and Export» → «Import DNS records» → загрузите example.com-dns-zone.txt.
+; После импорта проверьте, что у каждой записи стоит «DNS only» (серое облако).
+; Тот же example.com-dns-zone.txt принимают Route53, Google, Namecheap, GoDaddy, Gandi, Hetzner, deSEC, DNSimple, Porkbun.
+; Панелям, которым нужна таблица, подойдёт example.com-dns-records.csv.
+
+
+; Почтовый хост указывает на публичный IP сервера.
+mail.example.com.    IN A    203.0.113.10
+
+; Почта домена принимается хостом mail.example.com.
+example.com.    IN MX 10    mail.example.com.
+
+; SPF: отправлять почту домена может только хост из MX.
+example.com.    IN TXT    "v=spf1 mx -all"
+
+; DMARC: письма без SPF/DKIM — в карантин, отчёты на postmaster.
+_dmarc.example.com.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com"
+
+; Прямая запись для PTR-хостнейма (обратный DNS должен резолвиться обратно в тот же IP).
+relay.example.com.    IN A    203.0.113.10
+
+; DKIM: значение выведет setup-скрипт в отчёте (ключ генерируется на сервере).
+; dkim._domainkey.example.com.    IN TXT    "v=DKIM1; k=rsa; p=<из отчёта setup-скрипта>"
+
+; PTR (обратный DNS) настраивается НЕ здесь, а в панели провайдера сервера:
+; 203.0.113.10 -> relay.example.com — критично для доставляемости.

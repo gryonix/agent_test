@@ -1,0 +1,5 @@
+ADMIN_USER=admin
+ADMIN_PASSWORD=__PW__
+WG_HOST=vpn.example.com
+WG_PORT=51821
+WG_SUBNET=10.9.0.0/24

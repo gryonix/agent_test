@@ -1,0 +1,33 @@
+---
+theme: light
+server:
+  address: 'tcp://0.0.0.0:9091'
+log:
+  level: info
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+access_control:
+  # Anything not named below is not reachable through the portal. A
+  # permissive default here would put every future site behind SSO the
+  # day it is created, including the ones whose mobile apps cannot use
+  # it.
+  default_policy: deny
+  rules:
+    - domain: 'dns.example.com'
+      policy: one_factor
+session:
+  cookies:
+    - name: authelia_session
+      domain: 'example.com'
+      authelia_url: 'https://login.example.com'
+storage:
+  local:
+    path: /config/db.sqlite3
+notifier:
+  # A file, not mail: password reset is the only thing this notifies
+  # about, and a mail server is not something this deployment is
+  # guaranteed to have. The file is inside the config volume and
+  # readable only by root.
+  filesystem:
+    filename: /config/notification.txt

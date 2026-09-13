@@ -1,0 +1,43 @@
+services:
+  amnezia-wg-easy:
+    image: ghcr.io/deckersu/amnezia-wg-easy:14
+    container_name: awgvpn
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    # Most kernels have no AmneziaWG module, so awg-quick falls back
+    # to the userspace amneziawg-go, which needs a TUN device to
+    # bring wg0 up. Without it the container crashlooped with
+    # "RTNETLINK: Not supported" / "Protocol not supported".
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    environment:
+      WG_HOST: vpn.example.com
+      WG_PORT: "51922"
+      # 10.10.0.x: clear of the relay tunnel (10.8.0.0/24) and the
+      # plain WireGuard VPN (10.9.0.0/24).
+      WG_DEFAULT_ADDRESS: 10.10.0.x
+      PASSWORD_HASH: ${PASSWORD_HASH}
+      PORT: "51823"
+    volumes:
+      # The deckersu fork stores its config under
+      # /etc/amnezia/amneziawg (NOT wg-easy's /etc/wireguard) — the
+      # container ENOENT-crashlooped saving wg0.json when mounted at
+      # the wrong path, and the panel (which reads <path>/data/
+      # wg0.json) saw nothing. Mount at the path the fork uses.
+      - /srv/awg/data:/etc/amnezia/amneziawg
+    ports:
+      # The wg-easy fork sets the wg0 interface's ListenPort to
+      # WG_PORT (the same value advertised to clients), so the
+      # container listens on `port` INTERNALLY — not on a fixed
+      # 51820. Publishing host:port onto a different container port
+      # (the old 51820) sent every UDP packet to a port nothing
+      # listened on: clients handshook into a black hole. The
+      # container port must equal WG_PORT. (The unified VPN panel's
+      # own wgpanel already does this right — host:wgPort→wgPort.)
+      - "51922:51922/udp"
+      - "127.0.0.1:51823:51823"

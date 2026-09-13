@@ -1,0 +1,68 @@
+services:
+  mailserver:
+    image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
+    container_name: mailserver
+    hostname: mail.example.com
+    restart: unless-stopped
+    env_file: .env
+    # Every client port, including the STARTTLS pair. This engine
+    # serves them all, so opening them is honest here.
+    ports:
+      - "25:25"
+      - "143:143"
+      - "465:465"
+      - "587:587"
+      - "993:993"
+      - "4190:4190"
+    volumes:
+      - /opt/docker-mailserver/mail-data:/var/mail
+      - /opt/docker-mailserver/mail-state:/var/mail-state
+      - /opt/docker-mailserver/mail-logs:/var/log/mail
+      - /opt/docker-mailserver/config:/tmp/docker-mailserver
+      - /opt/docker-mailserver/certs:/etc/gryonixnexus-certs:ro
+      - /etc/localtime:/etc/localtime:ro
+    # The container answers to its own certificate name INSIDE the
+    # compose network. Roundcube verifies the peer name (PHP does
+    # by default and Roundcube leaves imap_conn_options unset), so
+    # connecting to `mailserver` failed against a certificate
+    # issued for mail.example.com — proven live. Aliasing here fixes
+    # the name instead of switching verification off.
+    networks:
+      default:
+        aliases:
+          - mail.example.com
+    # Postfix and Dovecot change kernel-visible limits and need to
+    # drop privileges themselves; this is the capability set
+    # upstream documents for a non-privileged run.
+    cap_add:
+      - NET_ADMIN
+    stop_grace_period: 1m
+  webmail:
+    image: roundcube/roundcubemail:1.6.17-apache
+    container_name: mailserver-webmail
+    restart: unless-stopped
+    depends_on:
+      - mailserver
+    environment:
+      # The mail container's alias, not its service name: this
+      # name is what the certificate is issued for, and the
+      # connection is verified. It still resolves inside the
+      # compose network, so the traffic never leaves the host and
+      # never touches the published ports.
+      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://mail.example.com
+      ROUNDCUBEMAIL_DEFAULT_PORT: "993"
+      ROUNDCUBEMAIL_SMTP_SERVER: tls://mail.example.com
+      ROUNDCUBEMAIL_SMTP_PORT: "587"
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve
+      ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
+    volumes:
+      - /opt/docker-mailserver/webmail:/var/roundcube/config
+      # /var/roundcube/db is where the image puts its sqlite file
+      # (ROUNDCUBEMAIL_DB_DIR); mounted anywhere else the database
+      # stays in the container layer and every recreate throws
+      # away the users' settings, contacts and address book.
+      - /opt/docker-mailserver/webmail-db:/var/roundcube/db
+    ports:
+      # Loopback only: Caddy terminates TLS in front of it, which
+      # also puts it under the lockdown guard like every other UI.
+      - "127.0.0.1:8086:80"

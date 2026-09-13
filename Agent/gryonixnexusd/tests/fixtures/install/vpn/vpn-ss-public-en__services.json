@@ -1,0 +1,1 @@
+{"services":[{"id":"shadowsocks","name":"Shadowsocks","endpoint":"vpn.example.com:8388 · TCP+UDP","host":"vpn.example.com","port":"8388"}]}

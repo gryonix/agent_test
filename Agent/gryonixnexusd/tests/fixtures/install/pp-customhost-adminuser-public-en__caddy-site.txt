@@ -1,0 +1,5 @@
+photos2.example.com {
+    # gryonixnexus: photoprism
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:2342
+}

@@ -1,0 +1,4 @@
+hostname=games.example.com
+upstreamPort=8095
+adminGuard=true
+upstreamHTTPS=true

@@ -1,0 +1,14 @@
+; BIND zone file for example.org - import this at your DNS provider.
+; SOA/NS are managed by the provider and are intentionally not included.
+$ORIGIN example.org.
+$TTL 3600
+mail.example.org.    3600    IN A    203.0.113.10
+example.org.    3600    IN MX 10    mail.example.com.
+example.org.    3600    IN TXT    "v=spf1 mx -all"
+_dmarc.example.org.    3600    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.org"
+cloud.example.org.    3600    IN A    203.0.113.10
+git.example.org.    3600    IN A    203.0.113.10
+gitlab.example.org.    3600    IN A    203.0.113.10
+photos.example.org.    3600    IN A    203.0.113.10
+vault.example.org.    3600    IN A    203.0.113.10
+vpn.example.org.    3600    IN A    203.0.113.10

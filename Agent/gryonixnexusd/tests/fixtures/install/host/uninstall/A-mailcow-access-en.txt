@@ -1,0 +1,177 @@
+#!/bin/bash
+# Managed by gryonixNexus — remove services or the whole gryonixNexus install.
+# Usage: gryonixnexus-uninstall.sh <service|vpn|--all> [--purge-data] [--purge-backups]
+# Default keeps data and backups on disk; the flags delete them (independently).
+set -euo pipefail
+
+TARGET="${1:-}"
+PURGE_DATA=0
+PURGE_BACKUPS=0
+shift || true
+for arg in "$@"; do
+  case "$arg" in
+    --purge-data) PURGE_DATA=1 ;;
+    --purge-backups) PURGE_BACKUPS=1 ;;
+  esac
+done
+
+compose_down() {
+  if [ "$PURGE_DATA" -eq 1 ]; then
+    # --rmi local also reclaims the images, but only the ones THIS
+    # project's services use — the scoped replacement for the
+    # `docker system prune -af` that used to run once at the end and
+    # took every unused image and stopped container on the host with
+    # it, ours or not. Images still referenced elsewhere are skipped
+    # by docker itself.
+    docker compose -p "$1" down --remove-orphans --volumes --rmi local >/dev/null 2>&1 || true
+  else
+    docker compose -p "$1" down --remove-orphans >/dev/null 2>&1 || true
+  fi
+}
+
+# Removes one site block from the Caddyfile. The header is the exact
+# first line of the block as writeCaddyfile emits it (top-level `}` on
+# its own line closes it) — wrapper and Caddyfile are regenerated
+# together on every setup run, so the format cannot drift between them.
+remove_caddy_site() {
+  local f=/etc/caddy/Caddyfile
+  [ -f "$f" ] || return 0
+  awk -v start="$1 {" '
+    $0 == start {skip=1; next}
+    skip && $0 == "}" {skip=0; next}
+    !skip {print}
+  ' "$f" > "$f.gryonixnexus" && mv "$f.gryonixnexus" "$f"
+  systemctl reload caddy 2>/dev/null || true
+}
+
+# Drops exactly the sudoers lines named — baked in by the generator
+# from the SAME sudoersLines a service was whitelisted with, never
+# rediscovered here. Staged and validated with visudo, the same way
+# the whitelist is written: a set of lines that fails to parse (should
+# never happen — they are asked in the format already on disk) leaves
+# the whitelist untouched rather than risk one sudo cannot read.
+remove_sudoers_lines() {
+  local f=/etc/sudoers.d/gryonixnexus-control
+  [ -f "$f" ] || return 0
+  local tmp="$f.gryonixnexus"
+  printf '%s\n' "$@" | grep -vFxf - "$f" > "$tmp" || true
+  if [ -s "$tmp" ] && visudo -cf "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$f"
+  else
+    rm -f "$tmp"
+  fi
+}
+
+uninstall_mailcow() {
+  compose_down 'mailcowdockerized'
+  remove_caddy_site 'mail.example.com'
+  systemctl disable --now gryonixnexus-mailcow-cert-sync.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/gryonixnexus-mailcow-cert-sync.service /etc/systemd/system/gryonixnexus-mailcow-cert-sync.timer /opt/gryonixnexus-mailcow-cert-sync.sh
+  systemctl daemon-reload || true
+  rm -f '/opt/mailcow-dockerized/bot-backup.sh' '/opt/mailcow-dockerized'/bot-backup.sh.bak.* || true
+  rm -f /opt/gryonixnexus-dkim.sh
+  if [ "$PURGE_DATA" -eq 1 ]; then
+    rm -rf '/opt/mailcow-dockerized'
+  fi
+  if [ "$PURGE_BACKUPS" -eq 1 ]; then
+    rm -rf '/opt/backups/mailcow'
+  fi
+  remove_sudoers_lines \
+    'admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p mailcowdockerized ps' \
+    'admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p mailcowdockerized restart' \
+    'admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p mailcowdockerized start' \
+    'admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p mailcowdockerized stop' \
+    'admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-backup-ctl.sh' \
+    'admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-restore.sh' \
+    'admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p mailcowdockerized logs --tail 500 --timestamps' \
+    'admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-dkim.sh'
+}
+
+uninstall_all() {
+  uninstall_mailcow
+  # Scheduled updates: the timer is armed by set-schedule, not by
+  # setup, so it outlives the services unless it is stopped here.
+  systemctl disable --now 'gryonixnexus-autoupdate.timer' >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/gryonixnexus-autoupdate.timer /etc/systemd/system/gryonixnexus-autoupdate.service
+  rm -f '/etc/gryonixnexus/autoupdate.conf' '/var/lib/gryonixnexus/autoupdate-status.txt'
+  rm -f '/opt/gryonixnexus-update-ctl.sh'
+  # Scheduled backups: the timer is armed by set-schedule, not by
+  # setup, so it outlives the services unless it is stopped here.
+  systemctl disable --now 'gryonixnexus-autobackup.timer' >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/gryonixnexus-autobackup.timer /etc/systemd/system/gryonixnexus-autobackup.service
+  rm -f '/opt/gryonixnexus-backup-ctl.sh'
+  rm -rf '/etc/gryonixnexus'
+  # Dynamic DNS: the timer is armed by the panel long after setup,
+  # so it outlives the services unless it is stopped here.
+  systemctl disable --now 'gryonixnexus-ddns.timer' >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/gryonixnexus-ddns.timer /etc/systemd/system/gryonixnexus-ddns.service
+  rm -f '/etc/gryonixnexus/ddns.conf' '/var/lib/gryonixnexus/ddns-status.txt'
+  rm -f '/opt/gryonixnexus-ddns.sh'
+  # Control-plane agent: installed by its own bootstrap, outside this
+  # setup, and therefore invisible to everything else here. Stopped
+  # before the state directory below is removed — the unit's
+  # StateDirectory= re-creates it on every start.
+  if [ -f /etc/systemd/system/gryonixnexusd.service ]; then
+    systemctl disable --now 'gryonixnexusd.service' >/dev/null 2>&1 || true
+    rm -f '/etc/systemd/system/gryonixnexusd.service'
+    systemctl daemon-reload || true
+  fi
+  rm -f '/usr/local/bin/gryonixnexusd' '/run/gryonixnexusd.sock'
+  rm -rf '/var/lib/gryonixnexus/agent'
+  # The daemon before the rename (gryonixd). install-agent.sh removes
+  # it, but a host that never re-ran the bootstrap still has it, and
+  # its unit is Restart=always too.
+  if [ -f /etc/systemd/system/gryonixnexus.service ]; then
+    systemctl disable --now 'gryonixnexus.service' >/dev/null 2>&1 || true
+    rm -f '/etc/systemd/system/gryonixnexus.service'
+    systemctl daemon-reload || true
+  fi
+  rm -f '/usr/local/bin/gryonixd' '/run/gryonixd.sock'
+  # Host metrics collector + its history
+  systemctl disable --now gryonixnexus-metrics >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/gryonixnexus-metrics.service /opt/gryonixnexus-metrics-collector.sh
+  systemctl daemon-reload || true
+  rm -rf /var/lib/gryonixnexus
+  # The Caddy ingress is entirely ours
+  systemctl disable --now caddy >/dev/null 2>&1 || true
+  rm -f /etc/caddy/Caddyfile '/etc/caddy/gryonixnexus-admin-guard'
+
+  # No host-wide `docker system prune` here: image reclamation is done
+  # per compose project by compose_down --rmi local, which cannot
+  # reach Docker state this deployment did not create.
+  # Dashboard wrappers, then our own whitelist last — after this line
+  # the app's sudo access is gone, which is the point.
+  rm -f '/opt/gryonixnexus-container-ctl.sh' '/opt/gryonixnexus-restore.sh'
+  # The agent bootstrap wrapper and whatever sources it unpacked. A
+  # root-owned script the erase leaves behind is the DDNS lesson: the
+  # erased machine still carrying something only root can remove.
+  rm -f '/opt/gryonixnexus-agent-bootstrap.sh'
+  rm -rf '/opt/gryonixnexus-agent-src'
+  # Backup copies the setup makes before overwriting a managed file.
+  rm -f /etc/nftables.conf.bak.* /etc/wireguard/wg0.conf.bak.* /etc/systemd/system/gryonixnexus-*.service.bak.* /opt/gryonixnexus-*.bak.* /opt/vaultwarden-update.sh.bak.* /etc/caddy/Caddyfile.bak.* /etc/systemd/system/gryonixnexus-*.timer.bak.* /etc/sysctl.d/99-gryonixnexus-rpfilter.conf.bak.* || true
+  # SSH password login comes back BEFORE the app key is stripped below,
+  # so this machine is never left with neither way in.
+  rm -f /etc/ssh/sshd_config.d/10-gryonixnexus-no-password.conf
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+  APP_KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeFakeFakeFakeFakeFakeFakeFakeFakeFakeFake gryonixnexus-app'
+  USER_HOME="$(getent passwd 'admin' | cut -d: -f6 || true)"
+  if [ -n "$USER_HOME" ] && [ -f "$USER_HOME/.ssh/authorized_keys" ]; then
+    grep -vxF "$APP_KEY" "$USER_HOME/.ssh/authorized_keys" > "$USER_HOME/.ssh/authorized_keys.gryonixnexus" || true
+    mv "$USER_HOME/.ssh/authorized_keys.gryonixnexus" "$USER_HOME/.ssh/authorized_keys"
+    chmod 600 "$USER_HOME/.ssh/authorized_keys"
+    # Root wrote the replacement, and sshd reads authorized_keys as
+    # the account: leaving it root-owned makes the file unreadable to
+    # sshd and kills every OTHER key the account has. Same reason the
+    # revoke step chowns; see revokeInstallKey.
+    chown 'admin' "$USER_HOME/.ssh/authorized_keys"
+  fi
+  rm -f /etc/sudoers.d/gryonixnexus-control
+  rm -f '/opt/gryonixnexus-uninstall.sh'
+}
+
+case "$TARGET" in
+  mailcow) uninstall_mailcow ;;
+  --all) uninstall_all ;;
+  *) echo "unsupported target: ${TARGET}" >&2; exit 2 ;;
+esac
+echo 'GRYONIXNEXUS_UNINSTALL_DONE'

@@ -1,0 +1,27 @@
+services:
+  pihole:
+    image: pihole/pihole:2026.07.2
+    container_name: pihole
+    restart: unless-stopped
+    environment:
+      # Read by FTL itself: every `FTLCONF_<section>_<key>` maps to
+      # the matching key of pihole.toml. Verified in the pinned
+      # image's own `bash_functions.sh`, not assumed.
+      FTLCONF_webserver_api_password: ${PIHOLE_ADMIN_PASSWORD}
+      # `local` — FTL's default — answers only the subnets of its
+      # own interfaces, and inside a container that is the docker
+      # bridge alone: every forwarded query would be refused, which
+      # reads as "the filter does not work" rather than as a bind
+      # setting. What is actually reachable is decided by the
+      # published address below.
+      FTLCONF_dns_listeningMode: all
+      FTLCONF_dns_upstreams: 1.1.1.1;1.0.0.1
+    volumes:
+      - /opt/pihole/etc-pihole:/etc/pihole
+    ports:
+      - "127.0.0.1:8092:80/tcp"
+      # See the type comment: a published port is reachable
+      # regardless of our nftables ruleset, so an open resolver is
+      # prevented by the bind address or nowhere.
+      - "127.0.0.1:53:53/tcp"
+      - "127.0.0.1:53:53/udp"

@@ -1,0 +1,116 @@
+#!/bin/bash
+# Managed by gryonixNexus — restore a service from a backup.
+# Usage: gryonixnexus-restore.sh <mailcow> <archive>
+#        GPG passphrase (encrypted archives only) on stdin.
+set -euo pipefail
+
+SERVICE="${1:-}"
+ARCHIVE="${2:-}"
+
+MAILCOW_PATH='/opt/mailcow-dockerized'
+MAILCOW_BACKUPS='/opt/backups/mailcow'
+VW_CONTAINER='vaultwarden'
+VW_DATA='/opt/vaultwarden/data'
+VW_BACKUPS='/opt/backups/vaultwarden'
+STAMP="$(date +%Y%m%d-%H%M%S)"
+
+# The archive must sit inside a backup directory this deployment owns.
+# Without the check a whitelisted wrapper would happily unpack ANY
+# root-readable file over a service's data directory.
+case "$ARCHIVE" in
+  *..*) echo "invalid path: ${ARCHIVE}" >&2; exit 2 ;;
+esac
+case "$ARCHIVE" in
+  "$MAILCOW_BACKUPS"/*|"$VW_BACKUPS"/*) ;;
+  *) echo "path outside the backup directories: ${ARCHIVE}" >&2; exit 2 ;;
+esac
+[ -e "$ARCHIVE" ] || { echo "no such backup: ${ARCHIVE}" >&2; exit 2; }
+
+restore_mailcow() {
+  [ -x "$MAILCOW_PATH/helper-scripts/backup_and_restore.sh" ] \
+    || { echo "mailcow не найден в /opt/mailcow-dockerized" >&2; exit 1; }
+  # mailcow's helper restores from a DIRECTORY inside its backup
+  # location and picks it from a numbered menu. Stage the chosen backup
+  # alone in a scratch location so that menu has exactly one entry.
+  local stage="$MAILCOW_BACKUPS/.restore-$STAMP"
+  mkdir -p "$stage"
+  chmod 0777 "$stage"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$stage'" EXIT
+  if [ -d "$ARCHIVE" ]; then
+    cp -a "$ARCHIVE" "$stage/"
+  else
+    tar -xzf "$ARCHIVE" -C "$stage"
+  fi
+  export MAILCOW_BACKUP_LOCATION="$stage"
+  # Bounded input, never `yes` (SIGPIPE under pipefail kills the pipeline).
+  # The helper asks exactly two questions and then restores ONCE:
+  # "Select a restore point" -> 1, the only staged backup; "Select a
+  # dataset to restore" -> 0, the "[ 0 ] - all" entry, which expands to
+  # every dataset in the backup (restore() loops over its arguments).
+  # Feeding component indices one after another instead — as this did —
+  # restores a SINGLE component and discards the rest of the input when
+  # the helper exits, and which component index 1 refers to is whatever
+  # `ls -f` returns first, so the survivor varied per run while the
+  # wrapper still reported success. Verified against mailcow 2026-07a.
+  # The trailing "n" answers the vmail branch's "Force a resync now?";
+  # extra input is harmless, a missing answer would depend on EOF.
+  # Under `timeout` because an unrecognised prompt would otherwise wait
+  # for a human that is never coming.
+  printf '1\n0\nn\n' \
+    | timeout 3600 "$MAILCOW_PATH/helper-scripts/backup_and_restore.sh" restore
+}
+
+restore_vaultwarden() {
+  local plain="$ARCHIVE"
+  local tmp=""
+  case "$ARCHIVE" in
+    *.gpg)
+      tmp="$(mktemp -d)"
+      # shellcheck disable=SC2064
+      trap "rm -rf '$tmp'" EXIT
+      plain="$tmp/restore.tar.gz"
+      # --passphrase-fd 0: the secret arrives on stdin, never in argv.
+      gpg --batch --quiet --yes --decrypt --passphrase-fd 0 \
+          --pinentry-mode loopback --output "$plain" "$ARCHIVE" \
+        || { echo "could not decrypt the backup (wrong passphrase?)" >&2; exit 1; }
+      ;;
+  esac
+  # Verify BEFORE touching live data: a truncated upload must not cost
+  # the user the data they still have.
+  tar -tzf "$plain" >/dev/null 2>&1 \
+    || { echo "the backup archive is not readable" >&2; exit 1; }
+  docker stop "$VW_CONTAINER" >/dev/null 2>&1 || true
+  # The old data is moved aside, never deleted: if unpacking fails it is
+  # the only way back, and the container must come up again either way.
+  local previous="${VW_DATA}.pre-restore-$STAMP"
+  local saved=0
+  if [ -d "$VW_DATA" ]; then mv "$VW_DATA" "$previous"; saved=1; fi
+  if tar -xzf "$plain" -C /; then
+    if [ "$saved" -eq 1 ]; then echo "previous data kept at ${previous}"; fi
+  else
+    echo "restore failed, rolling back to the previous data" >&2
+    rm -rf "$VW_DATA"
+    # Plain `if`, not `[ ... ] && mv`: under `set -e` a false test makes
+    # the whole list fail and would abort the function right here,
+    # leaving the container stopped.
+    if [ "$saved" -eq 1 ]; then mv "$previous" "$VW_DATA"; fi
+    docker start "$VW_CONTAINER" >/dev/null 2>&1 || true
+    exit 1
+  fi
+  docker start "$VW_CONTAINER" >/dev/null 2>&1 || true
+}
+
+
+
+case "$SERVICE" in
+  mailcow) restore_mailcow ;;
+  vaultwarden) restore_vaultwarden ;;
+
+  *) echo "unsupported service: ${SERVICE}" >&2; exit 2 ;;
+esac
+# A streamed command carries no exit status back to the app, so success
+# is announced with a fixed ASCII marker (never the localized line —
+# the app must not have to know which language the script was made in).
+echo "Восстановление завершено."
+echo 'GRYONIXNEXUS_RESTORE_DONE'

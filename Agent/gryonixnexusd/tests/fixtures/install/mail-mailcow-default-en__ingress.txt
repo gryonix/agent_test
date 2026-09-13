@@ -1,0 +1,4 @@
+hostname=mail.example.com
+upstreamPort=18443
+adminGuard=true
+upstreamHTTPS=true

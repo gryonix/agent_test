@@ -1,0 +1,38 @@
+
+log "ОТЧЁТ"
+echo "Домен:          example.com"
+echo "Туннель:        wg0 -> 203.0.113.10:51820 (полный туннель — исходящий трафик с IP VPS)"
+echo "PTR у провайдера: 203.0.113.10 -> relay.example.com (критично для доставляемости)."
+echo "Пароль бэкапов (сохраните — без него не восстановить шифрованный бэкап): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Статус сервисов:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Не забудьте DNS-записи из dns-records.txt — без них Caddy не выпустит сертификаты."
+
+echo
+echo "=== ДОСТУПЫ СЕРВИСОВ (сохраните) ==="
+echo "Vaultwarden:  https://vault.example.com"
+echo "  Админ-панель: https://vault.example.com/admin"
+echo "  Токен админа (сгенерирован на сервере): $(grep '^ADMIN_TOKEN=' /opt/vaultwarden/.env | cut -d= -f2-)"
+echo "  Вход: откройте URL и создайте СВОЙ аккаунт (ваш email + мастер-пароль на ваш выбор). Токен админа выше — только для панели /admin."
+echo "  Регистрация: открыта"
+echo "Nextcloud:    https://files.example.com"
+echo "  Администратор: admin"
+echo "  Пароль (сгенерирован на сервере): $(grep '^NEXTCLOUD_ADMIN_PASSWORD=' /opt/nextcloud/.env | cut -d= -f2-)"
+echo "Immich:       https://photos.example.com"
+echo "  ВАЖНО: откройте адрес прямо сейчас и создайте администратора — до этого зарегистрироваться может любой, кто откроет страницу."
+echo "Forgejo:      https://forgejo.example.com"
+echo "  Администратор: admin"
+echo "  Пароль (сгенерирован на сервере): $(grep '^FORGEJO_ADMIN_PASSWORD=' /opt/forgejo/.env | cut -d= -f2-)"
+echo "  Регистрация закрыта — новых пользователей заводите в администрировании сайта."
+echo "  Git по SSH: порт 2222 — git clone ssh://git@forgejo.example.com:2222/user/repo.git"
+echo "GitLab:       https://gitlab.example.com"
+echo "  Администратор: root"
+echo "  Пароль (сгенерирован на сервере): $(grep '^GITLAB_ROOT_PASSWORD=' /opt/gitlab-ce/.env | cut -d= -f2-)"
+echo "  Регистрация закрыта — новых пользователей заводите в панели администратора."
+echo "  Первый запуск занимает несколько минут — до его окончания адрес отвечает ошибкой."
+echo "  Git по SSH: порт 2223 — git clone ssh://git@gitlab.example.com:2223/user/repo.git"
+

@@ -1,0 +1,5 @@
+hostname=ai.example.com
+upstreamPort=8097
+adminGuard=true
+upstreamHTTPS=false
+publicPaths=

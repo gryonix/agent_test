@@ -1,0 +1,24 @@
+; DNS records for example.com — add them at your DNS provider.
+; Format: name  type  value
+
+; WHAT TO ADD — one block below = one record in your provider's form
+;
+;   Type: A
+;   Name: relay   — most panels want just relay — some want the full relay.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+; Cloudflare: set Proxy status to "DNS only" (grey cloud) for EVERY record here. The orange cloud breaks mail and the VPN.
+;
+; IMPORT INSTEAD OF TYPING
+; Cloudflare: DNS → Records → "Import and Export" → "Import DNS records" → upload example.com-dns-zone.txt.
+; Then check every imported record is "DNS only" (grey cloud).
+; The same example.com-dns-zone.txt works at Route53, Google, Namecheap, GoDaddy, Gandi, Hetzner, deSEC, DNSimple, Porkbun.
+; Panels that ask for a spreadsheet instead: use example.com-dns-records.csv.
+
+
+; Forward record for the PTR hostname (reverse DNS must resolve back to the same IP).
+relay.example.com.    IN A    203.0.113.10
+
+; PTR (reverse DNS) is configured NOT here but in the server provider's panel:
+; 203.0.113.10 -> relay.example.com — critical for deliverability.

@@ -1,0 +1,14 @@
+services:
+  xray:
+    image: ghcr.io/xtls/xray-core:26.7.11
+    container_name: xray
+    restart: unless-stopped
+    # Run as root (0:0): config.json is chmod 600 root-owned (setup
+    # and the panel both keep it 600, since it holds the REALITY
+    # private key), and the image runs as a non-root user that would
+    # otherwise get "permission denied" reading it.
+    user: "0:0"
+    volumes:
+      - /srv/xray/config:/usr/local/etc/xray:ro
+    ports:
+      - "9443:9443/tcp"

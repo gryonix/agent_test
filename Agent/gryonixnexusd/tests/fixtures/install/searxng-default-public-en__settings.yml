@@ -1,0 +1,11 @@
+# Written by gryonixNexus. Upstream's defaults are NOT copied here —
+# they are read out of the image, and only what this deployment
+# changes is named below.
+use_default_settings: true
+
+search:
+  # A program asks for JSON; the default is html only, and a chat that
+  # queries this engine gets a refusal without this line.
+  formats:
+    - html
+    - json

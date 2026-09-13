@@ -1,0 +1,19 @@
+[Unit]
+Description=gryonixNexus relay route sync (mirrors Docker's bridges into the tunnel policy-routing table)
+After=wg-quick@wg0.service docker.service
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=oneshot
+# No RemainAfterExit: this unit is re-triggered by its own timer every
+# 2 minutes, and a oneshot service that stays "active (exited)" after
+# its first run does not actually re-execute on a later `start` — the
+# manager sees it's already active and treats the job as redundant.
+# Live-caught 2026-08-08: the timer's second tick fired (LastTriggerUSec
+# advanced) but the script never ran a second time, and a docker
+# bridge created between runs stayed unmirrored — exactly the failure
+# this timer exists to prevent.
+ExecStart=/opt/gryonixnexus-relay-route-sync.sh
+
+[Install]
+WantedBy=multi-user.target

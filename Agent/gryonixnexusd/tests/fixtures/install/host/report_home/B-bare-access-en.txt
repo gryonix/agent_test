@@ -1,0 +1,15 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "Tunnel:         wg0 -> 203.0.113.10:51820 (full tunnel — outgoing traffic uses the VPS IP)"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+
+

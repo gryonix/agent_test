@@ -1,0 +1,5 @@
+hostname=ai.home.local
+upstreamPort=8100
+adminGuard=true
+upstreamHTTPS=false
+publicPaths=

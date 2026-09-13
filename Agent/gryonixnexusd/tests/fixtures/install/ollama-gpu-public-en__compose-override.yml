@@ -1,0 +1,12 @@
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # Every card on the host. The engine loads one model at a time
+            # and picks the device itself; enumerating them here would be a
+            # list to keep in step with the hardware.
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

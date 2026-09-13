@@ -1,0 +1,134 @@
+#!/usr/sbin/nft -f
+# Managed by gryonixNexus — VPS relay: firewall + DNAT of mail ports into the tunnel.
+# The public interface is detected automatically by the setup script.
+define pub_if = "@PUB_IF@"
+define home_ip = 10.8.0.2
+define vps_public = 203.0.113.10
+# Distinct SNAT source for hairpinned VPN-client traffic (see
+# postrouting): kept apart from the relay masquerade so the home
+# admin guard can allow VPN clients while blocking public visitors.
+define hairpin_src = 10.8.0.254
+
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iif "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+        meta l4proto icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } limit rate 10/second accept
+        meta l4proto ipv6-icmp accept
+        tcp dport 22 accept comment "SSH"
+        udp dport 51820 accept comment "WireGuard"
+        # Mail ports are NOT accepted on input: the traffic is
+        # DNATed and passes only through the forward chain.
+        jump gryonixnexus_services
+    }
+
+    # MSS clamping, and it is not an optimisation — without it a
+    # relayed HTTPS connection completes its TCP handshake and then
+    # HANGS. Measured on the production pair 2026-08-13 by capturing on
+    # the home half's wg0: the client's TLS ClientHello arrived at
+    # sequence 1449 with the first 1448 bytes missing, and the home node
+    # answered with a SACK naming the hole. A public client sizes its
+    # segments for ITS OWN path (mss 1460) and knows nothing about a
+    # 1420-byte tunnel in the middle, so every full-size segment falls
+    # into an MTU black hole. Nothing earlier caught it because
+    # everything tested through this relay until then was small: an
+    # ACME challenge, an SMTP handshake, a short message.
+    #
+    # Both directions, because both ends size their own segments: the
+    # client's SYN is clamped on its way OUT through the tunnel, and the
+    # home node's SYN-ACK on its way in. `rt mtu` is the route's own MTU,
+    # so the number is never hardcoded.
+    #
+    # Its own chain at mangle priority: the filter chain below runs at
+    # `filter` priority and its accept/drop verdicts would end traversal
+    # before an option rewrite could happen.
+    chain mangle_forward {
+        type filter hook forward priority mangle; policy accept;
+        oifname "wg0" tcp flags syn tcp option maxseg size set rt mtu
+        iifname "wg0" tcp flags syn tcp option maxseg size set rt mtu
+    }
+
+    chain forward {
+        # policy ACCEPT, and every drop below names an interface.
+        # nftables hands the packet to EVERY chain hooked at forward
+        # and one drop verdict anywhere is final, so a drop policy
+        # here also vetoes the per-container accepts Docker keeps in
+        # its own tables: containers on this host lose the network
+        # entirely (no pulls, no outbound) while the host itself is
+        # fine — it reads as "Docker is broken", not as "the firewall
+        # did this". The other rulesets solve that by declaring no
+        # forward chain at all; the relay cannot, its forward rules
+        # ARE the relay. So the default is inverted instead and
+        # default-deny is spelled out for the paths this host routes:
+        # anything touching the tunnel, and routing between public
+        # interfaces. Traffic we do not own falls through to whoever
+        # else is hooked here — on a Docker host, Docker's own chain.
+        type filter hook forward priority filter; policy accept;
+        iifname "wg0" ct state invalid drop
+        oifname "wg0" ct state invalid drop
+        ct state established,related accept
+        # Inbound mail/HTTP DNATed to the home node.
+        iifname $pub_if oifname "wg0" ip daddr $home_ip tcp dport { 80, 443 } accept
+        iifname $pub_if oifname "wg0" ip daddr $home_ip udp dport { 51821 } accept
+        # Hairpinned tunnel traffic to the deployment's own sites —
+        # DNATed back into the tunnel, so both interfaces are wg0.
+        iifname "wg0" oifname "wg0" ip daddr $home_ip tcp dport { 80, 443 } accept
+        iifname "wg0" oifname "wg0" ip daddr $home_ip udp dport { 51821 } accept
+        # Traffic initiated by the home node (outgoing mail,
+        # updates in full-tunnel mode) — out through the VPS.
+        iifname "wg0" oifname $pub_if accept
+        # The default-deny the policy used to provide, restated for
+        # the two paths that need it: nothing else enters or leaves
+        # the tunnel, and the relay is not an open router between
+        # public interfaces. Docker's bridges are named in neither,
+        # which is exactly the point — no interface list to go stale.
+        iifname "wg0" drop
+        oifname "wg0" drop
+        iifname $pub_if oifname $pub_if drop
+    }
+
+        # Filled by the control-plane agent when it installs a service that
+        # needs a port open (`flush chain` + `add rule`, never a reload of
+        # this file). Empty means nothing extra is open.
+        chain gryonixnexus_services {
+        }
+}
+
+table ip nat {
+    chain prerouting {
+        type nat hook prerouting priority dstnat;
+        iifname $pub_if tcp dport { 80, 443 } dnat to $home_ip
+        iifname $pub_if udp dport { 51821 } dnat to $home_ip
+        iifname "wg0" ip daddr $vps_public tcp dport { 80, 443 } dnat to $home_ip
+        iifname "wg0" ip daddr $vps_public udp dport { 51821 } dnat to $home_ip
+    }
+    chain postrouting {
+        type nat hook postrouting priority srcnat;
+        # Hairpin VPN-client flows (in on wg0, DNATed back out
+        # wg0) get a DISTINCT source so the home admin guard can
+        # tell them apart from relayed PUBLIC traffic. Both otherwise
+        # masquerade to the same VPS tunnel address, and the guard —
+        # which sees only the L3 source — could not distinguish a VPN
+        # client from a public visitor, so "VPN-only" blocked everyone.
+        # First matching NAT wins, so this precedes the masquerade.
+        iifname "wg0" oifname "wg0" ip daddr $home_ip snat to $hairpin_src
+        # Relayed public traffic is deliberately left un-NATed here:
+        # DNAT alone survives the round trip (conntrack un-DNATs the
+        # reply automatically on its way back out $pub_if), so the
+        # real client IP rides all the way to home instead of being
+        # collapsed into this relay's tunnel address. See homeRuleset
+        # and RelayRouteSyncSections for the other half — home has to
+        # route the reply back through the tunnel itself, since a
+        # foreign public source address is not something its main
+        # routing table sends to wg0 by default.
+        # Tunnel traffic egressing to the internet: mail leaves
+        # from the VPS public IP (matching PTR/SPF).
+        oifname $pub_if ip saddr 10.8.0.0/24 masquerade
+    }
+}
+
+include "/etc/nftables.d/gryonixnexus-*.nft"

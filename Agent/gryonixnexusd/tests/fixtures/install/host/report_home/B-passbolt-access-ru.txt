@@ -1,0 +1,24 @@
+
+log "ОТЧЁТ"
+echo "Домен:          example.com"
+echo "Туннель:        wg0 -> 203.0.113.10:51820 (полный туннель — исходящий трафик с IP VPS)"
+echo "PTR у провайдера: 203.0.113.10 -> relay.example.com (критично для доставляемости)."
+echo "Пароль бэкапов (сохраните — без него не восстановить шифрованный бэкап): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Статус сервисов:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Не забудьте DNS-записи из dns-records.txt — без них Caddy не выпустит сертификаты."
+
+echo
+echo "=== ДОСТУПЫ СЕРВИСОВ (сохраните) ==="
+echo "Passbolt:     https://vault.example.com"
+if [ -s /opt/passbolt/.registration-url ]; then
+  echo "  Завершите настройку администратора (эта ссылка работает ОДИН РАЗ):"
+  echo "  $(cat /opt/passbolt/.registration-url)"
+else
+  echo "  Здесь нет ссылки для настройки — если администратор уже приглашён, войдите под этой учётной записью; иначе проверьте логи контейнера и пригласите его вручную (cake passbolt register_user)."
+fi
+

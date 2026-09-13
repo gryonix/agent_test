@@ -1,0 +1,19 @@
+
+log "ОТЧЁТ"
+echo "Домен:          example.com"
+echo "PTR у провайдера: 203.0.113.10 -> relay.example.com (критично для доставляемости)."
+echo "Пароль бэкапов (сохраните — без него не восстановить шифрованный бэкап): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Статус сервисов:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Не забудьте DNS-записи из dns-records.txt — без них Caddy не выпустит сертификаты."
+
+echo
+echo "=== ДОСТУПЫ СЕРВИСОВ (сохраните) ==="
+echo "Psono:        https://vault.example.com"
+echo "  Администратор: admin@example.com"
+echo "  Пароль (сгенерирован на сервере): $(grep '^PSONO_ADMIN_PASSWORD=' /opt/psono/.env | cut -d= -f2-)"
+

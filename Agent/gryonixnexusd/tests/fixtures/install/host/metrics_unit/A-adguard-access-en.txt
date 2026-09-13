@@ -1,0 +1,13 @@
+[Unit]
+Description=gryonixNexus metrics history collector
+After=local-fs.target
+
+[Service]
+ExecStart=/opt/gryonixnexus-metrics-collector.sh
+Restart=always
+RestartSec=5
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

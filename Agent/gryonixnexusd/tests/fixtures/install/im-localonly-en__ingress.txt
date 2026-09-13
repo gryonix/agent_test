@@ -1,0 +1,4 @@
+hostname=photos.home.local
+upstreamPort=2283
+adminGuard=true
+upstreamHTTPS=false

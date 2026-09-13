@@ -1,0 +1,47 @@
+log "Mesh node: starting"
+install -d -m 755 /opt/tailscale
+install -d -m 700 /opt/tailscale/state
+cd /opt/tailscale
+docker compose -p tailscale pull -q
+# The state directory is the guard, not a marker of our own: a node
+# that already holds an identity must NOT be handed a new key, or
+# every re-run would mint one more and leave it unused on the
+# server. tailscaled ignores TS_AUTHKEY once it has state anyway —
+# this only keeps the server's key list clean.
+if [ ! -s /opt/tailscale/state/tailscaled.state ]; then
+  # The shapes below are the engine's REAL output, read off a
+  # running v0.29.3 rather than guessed: the listing is pretty
+  # printed with tabs, and `id` is a NUMBER (`"id": 1`), not the
+  # quoted string an eye expects. Hence the whitespace strip
+  # before any matching.
+  HS_USERS="$(timeout 30 docker exec headscale headscale users list -o json 2>/dev/null | tr -d ' \t\n')"
+  case "$HS_USERS" in
+    *'"name":"gryonixnexus"'*) : ;;
+    *) timeout 30 docker exec headscale headscale users create gryonixnexus >/dev/null 2>&1 || true
+       HS_USERS="$(timeout 30 docker exec headscale headscale users list -o json 2>/dev/null | tr -d ' \t\n')" ;;
+  esac
+  # `preauthkeys create --user` takes the numeric ID, not the name
+  # (checked against the CLI's own help).
+  TS_USER_ID="$(printf '%s' "$HS_USERS" | sed -n 's/.*"id":\([0-9]*\),"name":"gryonixnexus".*/\1/p')"
+  TS_KEY=""
+  if [ -n "$TS_USER_ID" ]; then
+    TS_KEY="$(timeout 30 docker exec headscale headscale preauthkeys create \
+      --user "$TS_USER_ID" --expiration 1h -o json 2>/dev/null | tr -d ' \t\n' | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')"
+  fi
+  if [ -n "$TS_KEY" ]; then
+    printf 'TS_AUTHKEY=%s\n' "$TS_KEY" > /opt/tailscale/.env
+    chmod 600 /opt/tailscale/.env
+  else
+    log "  could not mint a join key — the server will not be in its own mesh until one is given"
+  fi
+fi
+docker compose -p tailscale up -d
+# Proof, not hope: ask the SERVER whether the node arrived. A
+# container that is up but never joined looks identical from here.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if docker exec headscale headscale nodes list -o json 2>/dev/null | grep -q '"b5"'; then
+    log "  The server joined its own mesh as: b5"
+    break
+  fi
+  sleep 3
+done

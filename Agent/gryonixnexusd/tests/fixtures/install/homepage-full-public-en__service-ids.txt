@@ -1,0 +1,13 @@
+mailcow
+vaultwarden
+nextcloud
+seafile
+immich
+forgejo
+jellyfin
+adguard-home
+headscale
+cloudflared
+homepage
+wireguard-vpn
+vpn-panel

@@ -1,0 +1,251 @@
+; DNS records for example.com — add them at your DNS provider.
+; Format: name  type  value
+
+; WHAT TO ADD — one block below = one record in your provider's form
+;
+; ===== example.com =====
+;
+;   Type: A
+;   Name: mail   — most panels want just mail — some want the full mail.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: MX
+;   Name: @   — the domain itself — type @ (some panels want example.com)
+;   Value: mail.example.com
+;   Priority: 10
+;   TTL: Auto (or 3600)
+;
+;   Type: TXT
+;   Name: @   — the domain itself — type @ (some panels want example.com)
+;   Value: v=spf1 mx -all
+;   TTL: Auto (or 3600)
+;
+;   Type: TXT
+;   Name: _dmarc   — most panels want just _dmarc — some want the full _dmarc.example.com
+;   Value: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: relay   — most panels want just relay — some want the full relay.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: cloud   — most panels want just cloud — some want the full cloud.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: git   — most panels want just git — some want the full git.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: gitlab   — most panels want just gitlab — some want the full gitlab.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: photos   — most panels want just photos — some want the full photos.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: vault   — most panels want just vault — some want the full vault.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: vpn   — most panels want just vpn — some want the full vpn.example.com
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+; IMPORT INSTEAD OF TYPING
+; Cloudflare: DNS → Records → "Import and Export" → "Import DNS records" → upload example.com-dns-zone.txt.
+; Then check every imported record is "DNS only" (grey cloud).
+; The same example.com-dns-zone.txt works at Route53, Google, Namecheap, GoDaddy, Gandi, Hetzner, deSEC, DNSimple, Porkbun.
+; Panels that ask for a spreadsheet instead: use example.com-dns-records.csv.
+;
+; ===== example.org =====
+;
+;   Type: A
+;   Name: mail   — most panels want just mail — some want the full mail.example.org
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: MX
+;   Name: @   — the domain itself — type @ (some panels want example.org)
+;   Value: mail.example.com
+;   Priority: 10
+;   TTL: Auto (or 3600)
+;
+;   Type: TXT
+;   Name: @   — the domain itself — type @ (some panels want example.org)
+;   Value: v=spf1 mx -all
+;   TTL: Auto (or 3600)
+;
+;   Type: TXT
+;   Name: _dmarc   — most panels want just _dmarc — some want the full _dmarc.example.org
+;   Value: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.org
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: cloud   — most panels want just cloud — some want the full cloud.example.org
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: git   — most panels want just git — some want the full git.example.org
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: gitlab   — most panels want just gitlab — some want the full gitlab.example.org
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: photos   — most panels want just photos — some want the full photos.example.org
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: vault   — most panels want just vault — some want the full vault.example.org
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: vpn   — most panels want just vpn — some want the full vpn.example.org
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+; IMPORT INSTEAD OF TYPING
+; Cloudflare: DNS → Records → "Import and Export" → "Import DNS records" → upload example.org-dns-zone.txt.
+; Then check every imported record is "DNS only" (grey cloud).
+; The same example.org-dns-zone.txt works at Route53, Google, Namecheap, GoDaddy, Gandi, Hetzner, deSEC, DNSimple, Porkbun.
+; Panels that ask for a spreadsheet instead: use example.org-dns-records.csv.
+;
+; ===== example.net =====
+;
+;   Type: A
+;   Name: mail   — most panels want just mail — some want the full mail.example.net
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: MX
+;   Name: @   — the domain itself — type @ (some panels want example.net)
+;   Value: mail.example.com
+;   Priority: 10
+;   TTL: Auto (or 3600)
+;
+;   Type: TXT
+;   Name: @   — the domain itself — type @ (some panels want example.net)
+;   Value: v=spf1 mx -all
+;   TTL: Auto (or 3600)
+;
+;   Type: TXT
+;   Name: _dmarc   — most panels want just _dmarc — some want the full _dmarc.example.net
+;   Value: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.net
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: cloud   — most panels want just cloud — some want the full cloud.example.net
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: git   — most panels want just git — some want the full git.example.net
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: gitlab   — most panels want just gitlab — some want the full gitlab.example.net
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: photos   — most panels want just photos — some want the full photos.example.net
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: vault   — most panels want just vault — some want the full vault.example.net
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+;   Type: A
+;   Name: vpn   — most panels want just vpn — some want the full vpn.example.net
+;   Value: 203.0.113.10
+;   TTL: Auto (or 3600)
+;
+; IMPORT INSTEAD OF TYPING
+; Cloudflare: DNS → Records → "Import and Export" → "Import DNS records" → upload example.net-dns-zone.txt.
+; Then check every imported record is "DNS only" (grey cloud).
+; The same example.net-dns-zone.txt works at Route53, Google, Namecheap, GoDaddy, Gandi, Hetzner, deSEC, DNSimple, Porkbun.
+; Panels that ask for a spreadsheet instead: use example.net-dns-records.csv.
+;
+; Cloudflare: set Proxy status to "DNS only" (grey cloud) for EVERY record here. The orange cloud breaks mail and the VPN.
+;
+
+
+; The mail host points at the server's public IP.
+mail.example.com.    IN A    203.0.113.10
+mail.example.org.    IN A    203.0.113.10
+mail.example.net.    IN A    203.0.113.10
+
+; Mail for the domain is received by host mail.example.com.
+example.com.    IN MX 10    mail.example.com.
+
+; SPF: only the MX host may send mail for the domain.
+example.com.    IN TXT    "v=spf1 mx -all"
+
+; DMARC: mail failing SPF/DKIM goes to quarantine; reports go to postmaster.
+_dmarc.example.com.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com"
+
+; Mail for the domain is received by host mail.example.com.
+example.org.    IN MX 10    mail.example.com.
+
+; SPF: only the MX host may send mail for the domain.
+example.org.    IN TXT    "v=spf1 mx -all"
+
+; DMARC: mail failing SPF/DKIM goes to quarantine; reports go to postmaster.
+_dmarc.example.org.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.org"
+
+; Mail for the domain is received by host mail.example.com.
+example.net.    IN MX 10    mail.example.com.
+
+; SPF: only the MX host may send mail for the domain.
+example.net.    IN TXT    "v=spf1 mx -all"
+
+; DMARC: mail failing SPF/DKIM goes to quarantine; reports go to postmaster.
+_dmarc.example.net.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.net"
+
+; Forward record for the PTR hostname (reverse DNS must resolve back to the same IP).
+relay.example.com.    IN A    203.0.113.10
+
+; Service hostnames — the same public IP of the server (proxied by Caddy).
+cloud.example.com.    IN A    203.0.113.10
+cloud.example.net.    IN A    203.0.113.10
+cloud.example.org.    IN A    203.0.113.10
+git.example.com.    IN A    203.0.113.10
+git.example.net.    IN A    203.0.113.10
+git.example.org.    IN A    203.0.113.10
+gitlab.example.com.    IN A    203.0.113.10
+gitlab.example.net.    IN A    203.0.113.10
+gitlab.example.org.    IN A    203.0.113.10
+photos.example.com.    IN A    203.0.113.10
+photos.example.net.    IN A    203.0.113.10
+photos.example.org.    IN A    203.0.113.10
+vault.example.com.    IN A    203.0.113.10
+vault.example.net.    IN A    203.0.113.10
+vault.example.org.    IN A    203.0.113.10
+vpn.example.com.    IN A    203.0.113.10
+vpn.example.net.    IN A    203.0.113.10
+vpn.example.org.    IN A    203.0.113.10
+
+; DKIM: the setup script prints the value in its report (the key is generated on the server).
+; dkim._domainkey.example.com.    IN TXT    "v=DKIM1; k=rsa; p=<from the setup script report>"
+
+; PTR (reverse DNS) is configured NOT here but in the server provider's panel:
+; 203.0.113.10 -> relay.example.com — critical for deliverability.

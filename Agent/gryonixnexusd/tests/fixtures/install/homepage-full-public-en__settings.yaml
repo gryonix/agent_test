@@ -1,0 +1,31 @@
+---
+title: 'example.com'
+headerStyle: boxed
+layout:
+  'Mail':
+    style: row
+    columns: 3
+  'Passwords':
+    style: row
+    columns: 3
+  'Files':
+    style: row
+    columns: 3
+  'Photos':
+    style: row
+    columns: 3
+  'Media':
+    style: row
+    columns: 3
+  'Git hosting':
+    style: row
+    columns: 3
+  'Ad & tracker blocking':
+    style: row
+    columns: 3
+  'VPN':
+    style: row
+    columns: 3
+  'Private network for your devices':
+    style: row
+    columns: 3

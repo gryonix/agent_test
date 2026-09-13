@@ -1,0 +1,5 @@
+; BIND zone file for example.com - import this at your DNS provider.
+; SOA/NS are managed by the provider and are intentionally not included.
+$ORIGIN example.com.
+$TTL 3600
+relay.example.com.    3600    IN A    203.0.113.10

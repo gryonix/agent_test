@@ -1,0 +1,27 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo "Backup passphrase (keep it — encrypted backups need it): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Vaultwarden:  https://vault.example.com"
+echo "  Admin panel: https://vault.example.com/admin"
+echo "  Admin token (generated on the server): $(grep '^ADMIN_TOKEN=' /opt/vaultwarden/.env | cut -d= -f2-)"
+echo "  Sign-in: open the URL and create your own account (your email + a master password you choose). The admin token above is only for the /admin panel."
+echo "  Signups: open"
+echo "Immich:       https://immich.example.com"
+echo "  IMPORTANT: open this URL right now and create the administrator — until then, anyone who opens the page can register."
+echo "PhotoPrism:   https://photoprism.example.com"
+echo "  Administrator: admin"
+echo "  Password (generated on the server): $(grep '^PHOTOPRISM_ADMIN_PASSWORD=' /opt/photoprism/.env | cut -d= -f2-)"
+echo "  Put your pictures here, then start indexing in the web interface: /opt/photoprism/originals"
+

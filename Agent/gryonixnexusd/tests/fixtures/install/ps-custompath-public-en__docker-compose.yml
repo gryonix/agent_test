@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      # Read by the shared backup wrapper from the container's OWN
+      # environment — compose already put it there — because
+      # passing it from the host would sit in the argv of docker
+      # exec, where /proc hands it to every account.
+      POSTGRES_DB: psono
+      POSTGRES_USER: psono
+      POSTGRES_PASSWORD: ${PSONO_DB_PASSWORD}
+    volumes:
+      - /srv/psono/db:/var/lib/postgresql/data
+  psono:
+    image: psono/psono-combo:7.3.0-4.7.2-1.8.2
+    container_name: psono
+    restart: unless-stopped
+    depends_on:
+      - db
+    # Upstream's own installation guide sets this on the combo
+    # container; left at the kernel default, a busy instance drops
+    # connections under load rather than queuing them.
+    sysctls:
+      net.core.somaxconn: 65535
+    volumes:
+      # settings.yaml is written by setupSteps below, not by this
+      # compose file — it is not env-templated (see the type
+      # comment: two of its keys are a matched keypair). The same
+      # config.json is mounted twice, into the web client AND the
+      # admin portal, exactly as Psono's own reference compose
+      # does — they are two apps served by the same nginx and read
+      # the same "which server do I talk to" file.
+      - /srv/psono/config/settings.yaml:/root/.psono_server/settings.yaml
+      - /srv/psono/config/webclient/config.json:/usr/share/nginx/html/config.json
+      - /srv/psono/config/webclient/config.json:/usr/share/nginx/html/portal/config.json
+    ports:
+      # The combo image runs its OWN nginx on 80 in front of the
+      # web client, the admin portal AND the Django server (at
+      # /server) — one upstream port covers all three, and Caddy
+      # speaks plain HTTP to it like every other service here.
+      - "127.0.0.1:8089:80"

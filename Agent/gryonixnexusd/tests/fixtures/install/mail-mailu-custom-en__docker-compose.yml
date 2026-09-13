@@ -1,0 +1,101 @@
+services:
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    volumes:
+      - /srv/mailu/redis:/data
+  front:
+    image: ghcr.io/mailu/nginx:2024.06
+    restart: unless-stopped
+    env_file: .env
+    logging:
+      driver: json-file
+    ports:
+      # The web UI stays on loopback behind Caddy; the mail ports
+      # are the only public binds, and they are not proxyable —
+      # SMTP and IMAP are not HTTP.
+      - "127.0.0.1:8085:80"
+      - "25:25"
+      - "465:465"
+      - "587:587"
+      - "143:143"
+      - "993:993"
+      - "4190:4190"
+    volumes:
+      - /srv/mailu/certs:/certs
+      - /srv/mailu/overrides/nginx:/overrides:ro
+  resolver:
+    image: ghcr.io/mailu/unbound:2024.06
+    env_file: .env
+    restart: unless-stopped
+    networks:
+      default:
+        ipv4_address: 172.30.0.254
+  admin:
+    image: ghcr.io/mailu/admin:2024.06
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /srv/mailu/data:/data
+      - /srv/mailu/dkim:/dkim
+    depends_on:
+      - redis
+      - resolver
+    dns:
+      - 172.30.0.254
+  imap:
+    image: ghcr.io/mailu/dovecot:2024.06
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /srv/mailu/mail:/mail
+      - /srv/mailu/overrides:/overrides:ro
+    depends_on:
+      - front
+      - resolver
+    dns:
+      - 172.30.0.254
+  smtp:
+    image: ghcr.io/mailu/postfix:2024.06
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /srv/mailu/mailqueue:/queue
+      - /srv/mailu/overrides:/overrides:ro
+    depends_on:
+      - front
+      - resolver
+    dns:
+      - 172.30.0.254
+  antispam:
+    image: ghcr.io/mailu/rspamd:2024.06
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /srv/mailu/filter:/var/lib/rspamd
+      - /srv/mailu/overrides/rspamd:/etc/rspamd/override.d:ro
+    depends_on:
+      - front
+      - redis
+      - resolver
+    dns:
+      - 172.30.0.254
+  webmail:
+    image: ghcr.io/mailu/webmail:2024.06
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /srv/mailu/webmail:/data
+      - /srv/mailu/overrides/roundcube:/overrides:ro
+    depends_on:
+      - front
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        # Fixed on purpose: SUBNET below has to name the range
+        # docker really used, and letting docker choose it would
+        # make the two disagree the first time the pool shifts.
+        - subnet: 172.30.0.0/24

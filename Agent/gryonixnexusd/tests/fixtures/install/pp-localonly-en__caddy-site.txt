@@ -1,0 +1,6 @@
+photos.home.local {
+    # gryonixnexus: photoprism
+    tls internal
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:2342
+}

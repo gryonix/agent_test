@@ -1,0 +1,30 @@
+# Managed by gryonixNexus. Generated on the server; the __RANDOM__ marker
+# is replaced once and then left alone on re-runs.
+OVERRIDE_HOSTNAME=mail.example.com
+POSTMASTER_ADDRESS=postmaster@example.com
+# The certificate is handed in by the sync timer below — Caddy owns the
+# ACME account on this host, and only one process can.
+SSL_TYPE=manual
+SSL_CERT_PATH=/etc/gryonixnexus-certs/cert.pem
+SSL_KEY_PATH=/etc/gryonixnexus-certs/key.pem
+# Rspamd is the modern filter and it also signs DKIM; Amavis, ClamAV and
+# SpamAssassin are the legacy chain and together they are most of the
+# memory this engine was chosen to avoid. ClamAV alone wants about a
+# gigabyte, which is most of a small server's headroom.
+ENABLE_RSPAMD=1
+ENABLE_OPENDKIM=0
+ENABLE_AMAVIS=0
+ENABLE_CLAMAV=0
+ENABLE_SPAMASSASSIN=0
+# Sieve on 4190, the same port the other engines publish.
+ENABLE_MANAGESIEVE=1
+# No fail2ban: it needs NET_ADMIN plus host firewall access, and the
+# deployment already has nftables in front of this container.
+ENABLE_FAIL2BAN=0
+# Mailboxes live in a file the wrapper edits — no LDAP, no OIDC.
+ACCOUNT_PROVISIONER=FILE
+# Only the webmail container may relay without authenticating, and it
+# reaches Postfix over the compose network.
+PERMIT_DOCKER=connected-networks
+POSTFIX_MESSAGE_SIZE_LIMIT=50000000
+FIRST_MAILBOX_PASSWORD=__RANDOM__

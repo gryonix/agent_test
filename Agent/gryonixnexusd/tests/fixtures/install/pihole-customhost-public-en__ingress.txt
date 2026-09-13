@@ -1,0 +1,4 @@
+hostname=filter.example.com
+upstreamPort=8092
+adminGuard=true
+upstreamHTTPS=false

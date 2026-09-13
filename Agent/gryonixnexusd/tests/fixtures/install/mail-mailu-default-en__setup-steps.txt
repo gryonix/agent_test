@@ -1,0 +1,140 @@
+log "Mailu: starting"
+# 0700 on the trees that hold mail and keys: the containers run as
+# their own uids and do not need host accounts reading them.
+#
+# Root-owned is CORRECT here and must stay that way — this is NOT
+# Passbolt's bind-mount trap. Every Mailu image starts as root and
+# chowns its own mounts before dropping privileges (`admin` runs
+# `find /data | xargs -n1 chown mailu:mailu` and `chown -R
+# mailu:mailu /dkim`, `webmail` runs `chown -R mailu:mailu /data`),
+# so a host-side chown here would only guess at uids the image
+# already assigns itself. Read out of the pinned images.
+install -d -m 755 /opt/mailu
+install -d -m 700 /opt/mailu/certs /opt/mailu/dkim /opt/mailu/data
+install -d -m 755 /opt/mailu/mail /opt/mailu/mailqueue /opt/mailu/filter /opt/mailu/webmail /opt/mailu/redis
+install -d -m 755 /opt/mailu/overrides /opt/mailu/overrides/nginx /opt/mailu/overrides/rspamd /opt/mailu/overrides/roundcube
+cd /opt/mailu
+docker compose -p mailu pull -q
+docker compose -p mailu up -d
+cat > /opt/gryonixnexus-mailu-cert-sync.sh <<'EOF_MU_CERTSYNC'
+#!/bin/bash
+set -eu
+DOMAIN="mail.example.com"
+MAILU="/opt/mailu"
+DEST="$MAILU/certs"
+CADDY_DATA="/var/lib/caddy/.local/share/caddy/certificates"
+SRC_CRT="$(find "$CADDY_DATA" -type f -name "${DOMAIN}.crt" 2>/dev/null | head -n1)"
+SRC_KEY="$(find "$CADDY_DATA" -type f -name "${DOMAIN}.key" 2>/dev/null | head -n1)"
+# No certificate yet (ACME still pending) is not an error: the timer
+# comes back every hour and the mail ports keep serving the old one.
+if [ -z "$SRC_CRT" ] || [ -z "$SRC_KEY" ]; then exit 0; fi
+if cmp -s "$SRC_CRT" "$DEST/cert.pem" && cmp -s "$SRC_KEY" "$DEST/key.pem"; then exit 0; fi
+cp "$SRC_CRT" "$DEST/cert.pem"
+cp "$SRC_KEY" "$DEST/key.pem"
+chmod 600 "$DEST/cert.pem" "$DEST/key.pem"
+cd "$MAILU"
+# Only the services that terminate TLS themselves; restarting the whole
+# project would drop deliveries in flight for nothing.
+docker compose -p mailu restart front >/dev/null 2>&1 || true
+EOF_MU_CERTSYNC
+chmod 700 /opt/gryonixnexus-mailu-cert-sync.sh
+cat > /etc/systemd/system/gryonixnexus-mailu-cert-sync.service <<'EOF_MU_CERTSVC'
+[Unit]
+Description=Sync Caddy TLS certificate into Mailu (SMTP/IMAPS)
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/gryonixnexus-mailu-cert-sync.sh
+EOF_MU_CERTSVC
+cat > /etc/systemd/system/gryonixnexus-mailu-cert-sync.timer <<'EOF_MU_CERTTIMER'
+[Unit]
+Description=Periodic Caddy to Mailu TLS certificate sync
+[Timer]
+OnActiveSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF_MU_CERTTIMER
+systemctl daemon-reload
+systemctl enable --now gryonixnexus-mailu-cert-sync.timer >/dev/null 2>&1 || true
+/opt/gryonixnexus-mailu-cert-sync.sh || true
+# Domains and DKIM keys. Nothing here is fatal and no output is
+# discarded — the same rule the mailcow API and Nextcloud occ
+# blocks follow: errexit in the middle of this step would take the
+# remaining services and the revocation of the install key with it,
+# and a mail domain is fixable from the admin UI afterwards.
+# Its own cd: sections share one shell and the working directory
+# persists across them, so relying on an earlier step's cd is a
+# dependency nobody can see when the steps are reordered.
+cd /opt/mailu
+MU_OUT=""
+# `-u`: never as root — see `adminRunAsUser`. A root exec here
+# creates /data/main.db before the engine does, and the engine
+# then cannot write its own schema into it.
+mu_exec() { MU_OUT="$(timeout 120 docker compose -p mailu exec -T -u mailu admin "$@" 2>&1)"; }
+mu_why() { printf '%s' "$MU_OUT" | tr -d '\r\n' | cut -c1-300; }
+# A deadline, not a number of attempts: each attempt can burn its
+# own timeout, so counting attempts leaves the real wait unbounded.
+# `flask mailu config-export` has to reach the database, which is
+# what is actually not ready yet while the containers report up.
+MU_READY=0
+MU_TRY=0
+MU_DEADLINE=$(($(date +%s) + 300))
+while [ "$(date +%s)" -lt "$MU_DEADLINE" ]; do
+  if mu_exec flask mailu config-export -j; then MU_READY=1; break; fi
+  MU_TRY=$((MU_TRY + 1))
+  # Heartbeat every ~30 s: silence here is indistinguishable from a
+  # hung install in the app's progress view.
+  if [ "$((MU_TRY % 6))" -eq 0 ]; then
+    log "Mailu: waiting for the admin service to answer ($(mu_why))"
+  fi
+  sleep 5
+done
+if [ "$MU_READY" -eq 1 ]; then
+  # `-u` is merge mode, and it is not optional: without it the
+  # input is treated as the configuration rather than an addition
+  # to it. `-q` because the app streams this log.
+  #
+  # The key is `domain`, singular — the same name the export uses.
+  # A plural one is not an error the tool reports, it is simply a
+  # section nothing reads, so the keys would never be minted.
+  #
+  # Idempotent for this shape: `-generate-` mints a key only where
+  # there is none, so a re-run leaves existing keys alone.
+  if ! printf '%s\n' 'domain:' '  - name: example.com
+    dkim_key: -generate-' \
+       | timeout 120 docker compose -p mailu exec -T -u mailu admin \
+         flask mailu config-import -q -u >/dev/null 2>&1; then
+    log "Mailu: the mail domains were NOT created. Mailu itself is running: add them under Domains in its admin UI, or re-run the setup."
+  fi
+else
+  log "Mailu did not answer in time — the mail domains and DKIM keys were not created; check the container logs ($(mu_why))"
+fi
+cat > /opt/gryonixnexus-mailu-dkim.sh <<'EOF_GD_MU_DKIM'
+#!/bin/bash
+set -euo pipefail
+cd /opt/mailu 2>/dev/null || { echo "GRYONIXNEXUS_DKIM_DONE"; exit 0; }
+# --dns asks Mailu for the records it would publish; the private key is
+# NOT in that projection, which is why this dump can be whitelisted.
+OUT="$(timeout 60 docker compose -p mailu exec -T -u mailu admin \
+       flask mailu config-export -d -j domain 2>/dev/null || true)"
+printf '%s' "$OUT" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+for domain in data.get("domain", []):
+    record = domain.get("dns_dkim")
+    if not record:
+        continue
+    # dns_dkim is a full zone line: "<name> 600 IN TXT \"v=DKIM1…\"".
+    # The app wants the name and the value, so keep those two.
+    name, _, rest = record.partition(" ")
+    value = rest[rest.find("\"") :].strip() if "\"" in rest else rest.strip()
+    print("GRYONIXNEXUS_DKIM " + name.rstrip(".") + " " + value)
+' 2>/dev/null || true
+echo "GRYONIXNEXUS_DKIM_DONE"
+EOF_GD_MU_DKIM
+chmod 700 /opt/gryonixnexus-mailu-dkim.sh

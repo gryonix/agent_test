@@ -1,0 +1,34 @@
+
+log "ОТЧЁТ"
+echo "Домен:          example.com"
+echo "Туннель:        wg0 -> 203.0.113.10:51820 (полный туннель — исходящий трафик с IP VPS)"
+echo "PTR у провайдера: 203.0.113.10 -> relay.example.com (критично для доставляемости)."
+echo "Пароль бэкапов (сохраните — без него не восстановить шифрованный бэкап): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Статус сервисов:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Не забудьте DNS-записи из dns-records.txt — без них Caddy не выпустит сертификаты."
+
+echo
+echo "=== ДОСТУПЫ СЕРВИСОВ (сохраните) ==="
+echo "Vaultwarden:  https://vault.example.com"
+echo "  Админ-панель: https://vault.example.com/admin"
+echo "  Токен админа (сгенерирован на сервере): $(grep '^ADMIN_TOKEN=' /opt/vaultwarden/.env | cut -d= -f2-)"
+echo "  Вход: откройте URL и создайте СВОЙ аккаунт (ваш email + мастер-пароль на ваш выбор). Токен админа выше — только для панели /admin."
+echo "  Регистрация: открыта"
+echo "Shadowsocks: vpn.example.com:8388 (TCP+UDP)"
+SS_PW="$(sed -n 's/.*"password"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /opt/shadowsocks/config.json)"
+SS_ENC="$(printf '%s' "$SS_PW" | sed -e 's/+/%2B/g' -e 's#/#%2F#g' -e 's/=/%3D/g')"
+echo "  Ссылка для подключения (ss://) для клиентов:"
+echo "  ss://2022-blake3-aes-256-gcm:${SS_ENC}@vpn.example.com:8388#gryonixNexus"
+echo "  Вставьте ссылку ss:// в клиент Outline / Shadowsocks или сделайте из неё QR-код."
+echo "  Примечание: админ-панели (почта, облако, фото, vault) доступны ТОЛЬКО через WireGuard — создайте клиента WireGuard в VPN-панели и подключитесь им для управления. AmneziaWG и этот протокол предназначены для обычного доступа в интернет, до админ-панелей они не доходят."
+echo "VPN Panel: https://vpn.example.com"
+echo "  Админ-панель: https://vpn.example.com"
+echo "  Администратор: $(grep '^ADMIN_USER=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Пароль (сгенерирован на сервере): $(grep '^ADMIN_PASSWORD=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Клиентские устройства добавляются в панели: она генерирует их конфиги и QR-коды."
+

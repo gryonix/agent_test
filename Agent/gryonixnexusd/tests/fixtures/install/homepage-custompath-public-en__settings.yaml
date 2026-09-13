@@ -1,0 +1,7 @@
+---
+title: 'example.com'
+headerStyle: boxed
+layout:
+  'Passwords':
+    style: row
+    columns: 3

@@ -1,0 +1,25 @@
+#!/bin/bash
+# Managed by gryonixNexus — installs or updates the control-plane agent
+# from the archive the app uploaded into the control user's home.
+#
+# No arguments, deliberately: this runs under sudo, and an argument is
+# an argument that reached root. Both paths below are fixed at
+# generation time.
+set -euo pipefail
+ARCHIVE='/home/admin/gryonixnexus-agent-src.tar.gz'
+UNPACK='/opt/gryonixnexus-agent-src'
+
+[ -s "$ARCHIVE" ] || { echo "no agent sources uploaded ($ARCHIVE)" >&2; exit 1; }
+
+# --no-same-owner: the archive is written on a Mac, so its uids mean
+# nothing here, and tar honouring them fails in ways that read like a
+# corrupt archive.
+rm -rf "$UNPACK"
+install -d -m 700 "$UNPACK"
+tar -xzf "$ARCHIVE" -C "$UNPACK" --no-same-owner
+rm -f "$ARCHIVE"
+
+[ -x "$UNPACK/Agent/bootstrap/install-agent.sh" ] \
+  || { echo "the uploaded archive carries no bootstrap script" >&2; exit 1; }
+cd "$UNPACK/Agent"
+exec bash bootstrap/install-agent.sh

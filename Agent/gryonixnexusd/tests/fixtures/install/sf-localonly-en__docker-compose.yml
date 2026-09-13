@@ -1,0 +1,75 @@
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      # The shared backup wrapper dumps through this variable, read
+      # out of the container's OWN environment — a password passed
+      # from the host would sit in the argv of docker exec, where
+      # /proc hands it to every account. There is deliberately no
+      # MYSQL_DATABASE: Seafile owns three, and the backup plan
+      # names each one instead.
+      MYSQL_ROOT_PASSWORD: ${SEAFILE_DB_ROOT_PASSWORD}
+      MARIADB_AUTO_UPGRADE: "1"
+    volumes:
+      - /opt/seafile/db:/var/lib/mysql
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Cache only, so persistence is off: an appendonly file here
+    # would be disk traffic for data that is rebuilt on demand.
+    # No password either — redis takes it as a command-line
+    # argument, which puts it in the process table where the host
+    # can read it, and it buys nothing over a port that is never
+    # published outside this project's own network.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+  seafile:
+    image: seafileltd/seafile-mc:13.0.25
+    container_name: seafile
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+    environment:
+      SEAFILE_MYSQL_DB_HOST: db
+      SEAFILE_MYSQL_DB_PORT: "3306"
+      SEAFILE_MYSQL_DB_USER: seafile
+      SEAFILE_MYSQL_DB_PASSWORD: ${SEAFILE_DB_PASSWORD}
+      # Only used on the first start, to create the three schemas
+      # and the unprivileged user above.
+      INIT_SEAFILE_MYSQL_ROOT_PASSWORD: ${SEAFILE_DB_ROOT_PASSWORD}
+      SEAFILE_MYSQL_DB_CCNET_DB_NAME: ccnet_db
+      SEAFILE_MYSQL_DB_SEAFILE_DB_NAME: seafile_db
+      SEAFILE_MYSQL_DB_SEAHUB_DB_NAME: seahub_db
+      # The administrator, created on the first start. Left unset,
+      # Seafile creates me@example.com with the password `asecret`
+      # — a documented credential on a public hostname.
+      INIT_SEAFILE_ADMIN_EMAIL: admin@home.local
+      INIT_SEAFILE_ADMIN_PASSWORD: ${SEAFILE_ADMIN_PASSWORD}
+      # SERVICE_URL and FILE_SERVER_ROOT are derived from these two
+      # on every start, so they stay SINGLE-valued at the canonical
+      # name even though the Caddy site answers on the aliases too.
+      # The protocol must be https: it is what the browser speaks,
+      # and an http value here makes every download link a
+      # mixed-content block.
+      SEAFILE_SERVER_HOSTNAME: files.home.local
+      SEAFILE_SERVER_PROTOCOL: https
+      SITE_ROOT: /
+      NON_ROOT: "false"
+      TIME_ZONE: Etc/UTC
+      JWT_PRIVATE_KEY: ${SEAFILE_JWT_PRIVATE_KEY}
+      # SeaDoc is a SEPARATE container upstream ships in its own
+      # compose file. Left at its default (true) the server
+      # advertises a /sdoc-server endpoint that nothing answers, so
+      # opening a document fails with no explanation — off is the
+      # honest state of an install that does not include it.
+      ENABLE_SEADOC: "false"
+      CACHE_PROVIDER: redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    volumes:
+      - /opt/seafile/data:/shared
+    ports:
+      # The container runs its own nginx on 80, which fronts
+      # seahub, the file server and WebDAV on one port.
+      - "127.0.0.1:8088:80"

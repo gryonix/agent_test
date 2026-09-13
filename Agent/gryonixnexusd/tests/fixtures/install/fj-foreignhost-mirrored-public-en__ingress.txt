@@ -1,0 +1,4 @@
+hostname=git.other-company.net
+upstreamPort=8083
+adminGuard=true
+upstreamHTTPS=false

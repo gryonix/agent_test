@@ -1,0 +1,13 @@
+---
+- 'Files':
+    - 'Seafile':
+        href: https://files.home.local
+        description: 'File sync and sharing across your devices — your own drive, on your own server.'
+- 'Photos':
+    - 'PhotoPrism':
+        href: https://photos.home.local
+        description: 'A photo and video library: automatic phone backup, albums, search.'
+- 'Media':
+    - 'Jellyfin':
+        href: https://media.home.local
+        description: 'Streams films, series and music you already own to any device.'

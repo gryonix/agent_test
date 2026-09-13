@@ -1,0 +1,18 @@
+
+log "REPORT"
+echo "WireGuard:   /etc/wireguard/wg0.conf — tunnel server, port UDP/51820"
+echo "Firewall:    /etc/nftables.conf — DNAT of ports 80, 443 -> 10.8.0.2"
+echo "Forwarding:  /etc/sysctl.d/99-gryonixnexus-forwarding.conf"
+echo
+echo "Service status:"
+for s in nftables wg-quick@wg0; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Tunnel (the handshake will appear after setup-home-server.sh runs on the home server):"
+wg show wg0 || true
+echo
+echo "Next steps:"
+echo "  1) Run setup-home-server.sh on the HOME server."
+echo "  2) PTR at the VPS provider: public IP -> relay.example.com."
+

@@ -1,0 +1,5 @@
+photos.example.com, photos.example.org, photos.example.net {
+    # gryonixnexus: immich
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:2283
+}

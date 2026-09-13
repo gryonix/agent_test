@@ -1,0 +1,17 @@
+services:
+  crafty:
+    image: registry.gitlab.com/crafty-controller/crafty-4:4.9.0
+    container_name: crafty
+    restart: unless-stopped
+    environment:
+      TZ: "Etc/UTC"
+    volumes:
+      - /opt/crafty/backups:/crafty/backups
+      - /opt/crafty/logs:/crafty/logs
+      - /opt/crafty/servers:/crafty/servers
+      - /opt/crafty/config:/crafty/app/config
+      - /opt/crafty/import:/crafty/import
+    ports:
+      # Loopback only — Caddy publishes the name, and the panel is
+      # an admin surface like every other one in this catalog.
+      - "127.0.0.1:8095:8443"

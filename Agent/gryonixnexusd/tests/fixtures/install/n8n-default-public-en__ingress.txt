@@ -1,0 +1,5 @@
+hostname=flows.example.com
+upstreamPort=8099
+adminGuard=true
+upstreamHTTPS=false
+publicPaths=/webhook/* /webhook-test/*

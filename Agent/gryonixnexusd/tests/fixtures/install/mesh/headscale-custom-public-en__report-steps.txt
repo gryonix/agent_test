@@ -1,0 +1,8 @@
+echo "Headscale: https://control.example.com"
+echo "  This address is the control server for your devices, not a web page"
+echo "  Create a user and a join key on the server:"
+echo "    sudo docker exec headscale headscale users create <name>"
+echo "    sudo docker exec headscale headscale preauthkeys create --user <id> --reusable --expiration 24h"
+echo "  Then join each device with the official Tailscale client:"
+echo "    tailscale up --login-server https://control.example.com --authkey <key>"
+echo "  Devices reach each other by name: <device>.mesh.internal"

@@ -1,0 +1,5 @@
+pass.example.com {
+    # gryonixnexus: vaultwarden
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:8082
+}

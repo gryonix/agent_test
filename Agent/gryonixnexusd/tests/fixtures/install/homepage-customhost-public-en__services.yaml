@@ -1,0 +1,5 @@
+---
+- 'Passwords':
+    - 'Vaultwarden':
+        href: https://vault.example.com
+        description: 'A password vault for people, with apps and browser extensions.'

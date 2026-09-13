@@ -1,0 +1,16 @@
+services:
+  ollama:
+    image: ollama/ollama:0.33.3
+    container_name: ollama
+    restart: unless-stopped
+    environment:
+      # Answer requests from the other containers on this host, not
+      # only from inside its own. The port is still bound to
+      # loopback below, so this widens nothing the outside can see.
+      OLLAMA_HOST: "0.0.0.0:11434"
+    volumes:
+      # Models. The one bind mount in this catalog that is expected
+      # to reach tens of gigabytes.
+      - /opt/ollama/models:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"

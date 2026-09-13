@@ -1,0 +1,236 @@
+{
+ "acquisition": {
+  "journalctl:journalctl-_SYSTEMD_UNIT=caddy.service": {
+   "reads": 20,
+   "unparsed": 20
+  },
+  "journalctl:journalctl-_SYSTEMD_UNIT=ssh.service._SYSTEMD_UNIT=sshd.service": {
+   "parsed": 302,
+   "pour": 1158,
+   "reads": 525,
+   "unparsed": 223
+  }
+ },
+ "alerts": {
+  "crowdsecurity/ssh-bf": 37,
+  "crowdsecurity/ssh-slow-bf": 11,
+  "gryonixNexus live check": 1
+ },
+ "appsec-challenge": {
+  "funnel": {},
+  "reasons": {}
+ },
+ "appsec-challenge-infra": {},
+ "appsec-engine": {},
+ "appsec-rule": {},
+ "bouncers": {
+  "gryonixnexus-firewall-bouncer": {
+   "": {
+    "processed": {
+     "byte": 161685394,
+     "packet": 188125
+    }
+   },
+   "CAPI": {
+    "active_decisions": {
+     "ip": 15737
+    },
+    "dropped": {
+     "byte": 81921,
+     "packet": 1620
+    }
+   },
+   "crowdsec": {
+    "active_decisions": {
+     "ip": 0
+    },
+    "dropped": {
+     "byte": 1167180,
+     "packet": 19409
+    }
+   },
+   "cscli": {
+    "active_decisions": {
+     "ip": 0
+    },
+    "dropped": {
+     "byte": 0,
+     "packet": 0
+    }
+   }
+  }
+ },
+ "decisions": {
+  "ssh:bruteforce": {
+   "CAPI": {
+    "ban": 15737
+   }
+  }
+ },
+ "lapi": {
+  "/v1/alerts": {
+   "GET": 5,
+   "POST": 20
+  },
+  "/v1/decisions/stream": {
+   "GET": 4326
+  },
+  "/v1/heartbeat": {
+   "GET": 720
+  },
+  "/v1/usage-metrics": {
+   "POST": 73
+  },
+  "/v1/watchers/login": {
+   "POST": 18
+  }
+ },
+ "lapi-bouncer": {
+  "gryonixnexus-firewall-bouncer": {
+   "/v1/decisions/stream": {
+    "GET": 4326
+   }
+  }
+ },
+ "lapi-decisions": {},
+ "lapi-machine": {
+  "005bb7a8f9ca47e7abc46af4a1d4fb06Y4TCd2ajDWrQNwBr": {
+   "/v1/alerts": {
+    "GET": 5,
+    "POST": 20
+   },
+   "/v1/heartbeat": {
+    "GET": 720
+   }
+  }
+ },
+ "parsers": {
+  "child-crowdsecurity/sshd-logs": {
+   "hits": 4691,
+   "parsed": 302,
+   "unparsed": 4389
+  },
+  "child-crowdsecurity/sshd-success-logs": {
+   "hits": 7,
+   "unparsed": 7
+  },
+  "child-crowdsecurity/syslog-logs": {
+   "hits": 525,
+   "parsed": 525
+  },
+  "crowdsecurity/cdn-whitelist": {
+   "hits": 20,
+   "parsed": 20
+  },
+  "crowdsecurity/dateparse-enrich": {
+   "hits": 302,
+   "parsed": 302
+  },
+  "crowdsecurity/geoip-enrich": {
+   "hits": 302,
+   "parsed": 302
+  },
+  "crowdsecurity/google-special-crawlers-whitelist": {
+   "hits": 20,
+   "parsed": 20
+  },
+  "crowdsecurity/non-syslog": {
+   "hits": 20,
+   "parsed": 20
+  },
+  "crowdsecurity/public-dns-allowlist": {
+   "hits": 302,
+   "parsed": 302
+  },
+  "crowdsecurity/rdns": {
+   "hits": 20,
+   "parsed": 20
+  },
+  "crowdsecurity/seo-bots-whitelist": {
+   "hits": 20,
+   "parsed": 20
+  },
+  "crowdsecurity/sshd-logs": {
+   "hits": 498,
+   "parsed": 302,
+   "unparsed": 196
+  },
+  "crowdsecurity/sshd-success-logs": {
+   "hits": 7,
+   "unparsed": 7
+  },
+  "crowdsecurity/syslog-logs": {
+   "hits": 525,
+   "parsed": 525
+  }
+ },
+ "scenarios": {
+  "crowdsecurity/ssh-bf": {
+   "curr_count": 0,
+   "instantiation": 73,
+   "overflow": 17,
+   "pour": 299,
+   "underflow": 56
+  },
+  "crowdsecurity/ssh-bf_user-enum": {
+   "curr_count": 0,
+   "instantiation": 70,
+   "pour": 98,
+   "underflow": 70
+  },
+  "crowdsecurity/ssh-cve-2024-6387": {
+   "curr_count": 0,
+   "instantiation": 1,
+   "pour": 1,
+   "underflow": 1
+  },
+  "crowdsecurity/ssh-slow-bf": {
+   "curr_count": 0,
+   "instantiation": 57,
+   "overflow": 3,
+   "pour": 299,
+   "underflow": 54
+  },
+  "crowdsecurity/ssh-slow-bf_user-enum": {
+   "curr_count": 0,
+   "instantiation": 55,
+   "pour": 84,
+   "underflow": 55
+  },
+  "crowdsecurity/ssh-time-based-bf": {
+   "curr_count": 8,
+   "instantiation": 46,
+   "pour": 299,
+   "underflow": 38
+  },
+  "crowdsecurity/ssh-time-based-bf_user-enum": {
+   "curr_count": 8,
+   "instantiation": 49,
+   "pour": 78,
+   "underflow": 41
+  }
+ },
+ "stash": {},
+ "whitelists": {
+  "crowdsecurity/cdn-whitelist": {
+   "CDN provider": {
+    "hits": 20
+   }
+  },
+  "crowdsecurity/google-special-crawlers-whitelist": {
+   "Google special crawlers ip range": {
+    "hits": 20
+   }
+  },
+  "crowdsecurity/public-dns-allowlist": {
+   "public DNS server": {
+    "hits": 302
+   }
+  },
+  "crowdsecurity/seo-bots-whitelist": {
+   "good bots (search engine crawlers)": {
+    "hits": 20
+   }
+  }
+ }
+}

@@ -1,0 +1,4 @@
+hostname=hub.example.com
+upstreamPort=8093
+adminGuard=true
+upstreamHTTPS=false

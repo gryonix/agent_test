@@ -1,0 +1,22 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.100.0
+    container_name: litellm
+    restart: unless-stopped
+    # The local engine answers on the host's own loopback, and the
+    # gateway is a separate compose project — see the chat's own
+    # note for why this is not a shared docker network.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    # The provider keys, rendered by the agent from its own store.
+    # A separate file from .env because nothing on the device ever
+    # writes it and nothing here ever reads it back.
+    env_file:
+      - /etc/gryonixnexus/litellm-keys.env
+    volumes:
+      - /srv/litellm/config.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:8098:4000"

@@ -1,0 +1,41 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "Mail host:      mail.example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo "Backup passphrase (keep it — encrypted backups need it): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Docker Mailserver:"
+echo "  Webmail:     https://mail.example.com"
+echo "  First mailbox: admin@example.com"
+echo "  Password (generated on the server): $(grep '^FIRST_MAILBOX_PASSWORD=' /opt/docker-mailserver/.env | cut -d= -f2-)"
+echo "  Further mailboxes are added from the app — this engine has no web admin of its own"
+echo "  DKIM records (add them to DNS):"
+/opt/gryonixnexus-dms-dkim.sh 2>/dev/null | grep '^GRYONIXNEXUS_DKIM ' | while read -r _ NAME VALUE; do
+  echo "    $NAME TXT $VALUE"
+done || echo "    not ready yet — run the DKIM setup again on the server"
+echo "Vaultwarden:  https://vault.example.com"
+echo "  Admin panel: https://vault.example.com/admin"
+echo "  Admin token (generated on the server): $(grep '^ADMIN_TOKEN=' /opt/vaultwarden/.env | cut -d= -f2-)"
+echo "  Sign-in: open the URL and create your own account (your email + a master password you choose). The admin token above is only for the /admin panel."
+echo "  Signups: open"
+echo "Forgejo:      https://git.example.com"
+echo "  Administrator: admin"
+echo "  Password (generated on the server): $(grep '^FORGEJO_ADMIN_PASSWORD=' /opt/forgejo/.env | cut -d= -f2-)"
+echo "  Registration is closed — add further users in Site Administration."
+echo "  Git over SSH: port 2222 — git clone ssh://git@git.example.com:2222/user/repo.git"
+echo "VPN Panel: https://vpn.example.com"
+echo "  Admin panel: https://vpn.example.com"
+echo "  Administrator: $(grep '^ADMIN_USER=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Password (generated on the server): $(grep '^ADMIN_PASSWORD=' /opt/gryonix-vpn-panel/.env | cut -d= -f2-)"
+echo "  Add client devices in the panel: it generates their configs and QR codes."
+

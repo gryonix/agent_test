@@ -1,0 +1,4 @@
+hostname=vault.home.local
+upstreamPort=8089
+adminGuard=true
+upstreamHTTPS=false

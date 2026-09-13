@@ -1,0 +1,59 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:19.2.1-ce.0
+    container_name: gitlab
+    restart: unless-stopped
+    hostname: git.example.com
+    # Upstream's own compose example raises this: the stock 64 MB
+    # of /dev/shm is not enough for the omnibus PostgreSQL.
+    shm_size: "256m"
+    environment:
+      # Passed separately so the secret stays in .env (0600) and
+      # never lands in docker-compose.yml; the omnibus config below
+      # reads it through ENV, which also keeps every literal `$`
+      # out of a file docker compose interpolates.
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://git.example.com'
+        # Caddy terminates TLS and proxies plain HTTP to the
+        # loopback port; without these two the bundled nginx binds
+        # HTTPS itself and answers the proxy with a redirect loop.
+        # Key names are VERSION-SPECIFIC and were read out of the
+        # pinned release's own gitlab.rb.template: master has since
+        # moved them under gitlab_rails['nginx'], and an omnibus
+        # that does not recognise a key simply ignores it — the
+        # failure would be a silently HTTPS-only nginx, not an error.
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        # An https external_url turns omnibus' own Let's Encrypt
+        # client ON by default. It would race Caddy for the same
+        # name and burn that name's ACME failure quota, and the
+        # certificate it fought for is one nothing here serves.
+        letsencrypt['enable'] = false
+        # Applied on the FIRST reconfigure only (omnibus ignores it
+        # once the database is seeded), so a re-run never resets a
+        # password the user has since changed.
+        gitlab_rails['initial_root_password'] = ENV['GITLAB_ROOT_PASSWORD']
+        # The image otherwise writes the password it used into
+        # /etc/gitlab/initial_root_password and deletes it after
+        # 24 h. Ours is already in .env and in the install report —
+        # a third copy is one more place to leak it from, and one
+        # that disappears on its own schedule.
+        gitlab_rails['store_initial_root_password'] = false
+        gitlab_rails['display_initial_root_password'] = false
+        # The bundled Prometheus/exporter stack is the largest
+        # slice of idle memory here and duplicates the metrics
+        # collector this project installs on the host anyway.
+        prometheus_monitoring['enable'] = false
+        # Two workers is upstream's own guidance for a small
+        # install; the default scales to a machine nobody here has.
+        puma['worker_processes'] = 2
+        gitlab_rails['gitlab_shell_ssh_port'] = 2223
+    volumes:
+      - /opt/gitlab-ce/config:/etc/gitlab
+      - /opt/gitlab-ce/logs:/var/log/gitlab
+      - /opt/gitlab-ce/data:/var/opt/gitlab
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "127.0.0.1:8084:80"
+      - "2223:22"

@@ -1,0 +1,94 @@
+[
+ {
+  "scenario": "crowdsecurity/ssh-slow-bf",
+  "created_at": "2026-09-01T16:25:37Z",
+  "events_count": 12,
+  "source": {
+   "value": "193.233.199.37",
+   "cn": "RU",
+   "scope": "Ip",
+   "as_name": "Global Connectivity Solutions Llp"
+  },
+  "decisions": [
+   {
+    "duration": "-31m58s",
+    "id": 30049,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/ssh-slow-bf",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "193.233.199.37"
+   }
+  ]
+ },
+ {
+  "scenario": "crowdsecurity/ssh-bf",
+  "created_at": "2026-09-01T15:24:08Z",
+  "events_count": 7,
+  "source": {
+   "value": "193.47.62.69",
+   "cn": "BG",
+   "scope": "Ip",
+   "as_name": "Gwy It Pty Ltd"
+  },
+  "decisions": [
+   {
+    "duration": "-1h33m27s",
+    "id": 30048,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/ssh-bf",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "193.47.62.69"
+   }
+  ]
+ },
+ {
+  "scenario": "crowdsecurity/ssh-bf",
+  "created_at": "2026-09-01T14:53:20Z",
+  "events_count": 7,
+  "source": {
+   "value": "62.60.130.242",
+   "cn": "IR",
+   "scope": "Ip",
+   "as_name": "Cipher Operations Doo Beograd - Novi Beograd"
+  },
+  "decisions": [
+   {
+    "duration": "-2h4m15s",
+    "id": 15047,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/ssh-bf",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "62.60.130.242"
+   }
+  ]
+ },
+ {
+  "scenario": "crowdsecurity/ssh-bf",
+  "created_at": "2026-09-01T14:33:06Z",
+  "events_count": 7,
+  "source": {
+   "value": "62.60.130.201",
+   "cn": "IR",
+   "scope": "Ip",
+   "as_name": "Cipher Operations Doo Beograd - Novi Beograd"
+  },
+  "decisions": [
+   {
+    "duration": "-2h24m29s",
+    "id": 15046,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/ssh-bf",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "62.60.130.201"
+   }
+  ]
+ }
+]

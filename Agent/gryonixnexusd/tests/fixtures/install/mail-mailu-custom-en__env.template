@@ -1,0 +1,50 @@
+# Managed by gryonixNexus. Generated on the server; secrets are the
+# __RANDOM__ markers, replaced once and then left alone on re-runs.
+SECRET_KEY=__RANDOM__
+DOMAIN=example.com
+HOSTNAMES=mail.example.com
+POSTMASTER=postmaster
+# See the type comment: Caddy owns 80/443 and the ACME account, so Mailu
+# serves plain HTTP for the proxy and uses the synced certificate for
+# SMTP/IMAP only.
+TLS_FLAVOR=mail
+SUBNET=172.30.0.0/24
+# The first administrator is created by the stack itself. `ifmissing`
+# rather than `update`: a re-run of setup must not reset a password the
+# owner has since changed.
+INITIAL_ADMIN_ACCOUNT=admin
+INITIAL_ADMIN_DOMAIN=example.com
+INITIAL_ADMIN_PW=__RANDOM__
+INITIAL_ADMIN_MODE=ifmissing
+# Behind a proxy Mailu would otherwise log and rate-limit Caddy's
+# address instead of the client's.
+#
+# The trusted address is the BRIDGE GATEWAY, not 127.0.0.1: Caddy
+# connects to a published port on the host, and the container sees that
+# connection arriving from the docker network's gateway. This is the
+# same trap as mailcow's API_ALLOW_FROM (see GOTCHAS.md) — a loopback
+# value here does not fail loudly, it silently makes every client look
+# like the proxy, which means the per-IP rate limit bans everyone at
+# once the first time one client gets a password wrong.
+REAL_IP_HEADER=X-Forwarded-For
+REAL_IP_FROM=172.30.0.1
+WEBROOT_REDIRECT=/webmail
+# ADMIN gates the admin interface ITSELF, WEB_ADMIN only says where it
+# would live. Without this the nginx template renders no location for
+# it at all: /admin falls through to WEBROOT_REDIRECT and lands on the
+# webmail, which reads as "the admin UI is broken". Live-found
+# 2026-08-05 — the setup report points at /admin.
+ADMIN=true
+WEB_ADMIN=/admin
+WEB_WEBMAIL=/webmail
+WEBMAIL=roundcube
+WEBDAV=none
+# Off deliberately: ClamAV alone wants about a gigabyte of RAM, which is
+# most of a small server's headroom. Rspamd still filters spam.
+ANTIVIRUS=none
+MESSAGE_SIZE_LIMIT=50000000
+RECIPIENT_DELIMITER=+
+DMARC_RUA=postmaster
+DMARC_RUF=postmaster
+COMPOSE_PROJECT_NAME=mailu
+MAILU_HOSTNAME=mail.example.com

@@ -1,0 +1,11 @@
+type,name,value,ttl,priority
+A,mail.example.org,203.0.113.10,3600,
+MX,example.org,mail.example.com,3600,10
+TXT,example.org,v=spf1 mx -all,3600,
+TXT,_dmarc.example.org,v=DMARC1; p=quarantine; rua=mailto:postmaster@example.org,3600,
+A,cloud.example.org,203.0.113.10,3600,
+A,git.example.org,203.0.113.10,3600,
+A,gitlab.example.org,203.0.113.10,3600,
+A,photos.example.org,203.0.113.10,3600,
+A,vault.example.org,203.0.113.10,3600,
+A,vpn.example.org,203.0.113.10,3600,

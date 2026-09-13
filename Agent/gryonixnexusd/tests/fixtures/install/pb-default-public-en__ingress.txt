@@ -1,0 +1,4 @@
+hostname=vault.example.com
+upstreamPort=8090
+adminGuard=true
+upstreamHTTPS=false

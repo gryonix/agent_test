@@ -1,0 +1,37 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "Mail host:      mail.example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Mailcow:      https://mail.example.com  (directory: /opt/mailcow-dockerized)"
+echo "  Administrator: admin"
+echo "  Password: moohoo"
+echo "  This is mailcow's standard password — change it after the first sign-in (System → Administrator)."
+echo "  SMTP/IMAPS use a trusted TLS certificate automatically (synced from Caddy and refreshed on renewal). Right after setup it may briefly be self-signed until Caddy issues the certificate — usually a few minutes."
+MC_KEY="$(grep '^API_KEY=' /opt/mailcow-dockerized/mailcow.conf | tail -n1 | cut -d= -f2-)"
+MC_DKIM_TXT="$(curl -fsSk --max-time 20 -H "X-API-Key: $MC_KEY" \
+  "https://127.0.0.1:18443/api/v1/get/dkim/example.com" 2>/dev/null \
+  | jq -r '.dkim_txt // empty' 2>/dev/null)"
+if [ -n "$MC_DKIM_TXT" ]; then
+  echo "  DKIM DNS record (add as TXT for dkim._domainkey.example.com):"
+  echo "  $MC_DKIM_TXT"
+  # Machine-readable twin of the two lines above: the app shows DKIM
+  # on its own screen after the install, and the human lines are
+  # localized (unparsable). Deliberately ASCII and fixed-shape —
+  # `<marker> <record name> <value>`. Mirrored by ServerControl's
+  # DKIMRecordParser; pinned by tests on both sides.
+  echo "GRYONIXNEXUS_DKIM dkim._domainkey.example.com $MC_DKIM_TXT"
+else
+  echo "  DKIM is not ready yet — re-run the script or check Configuration → ARC/DKIM keys in the mailcow admin UI."
+fi
+

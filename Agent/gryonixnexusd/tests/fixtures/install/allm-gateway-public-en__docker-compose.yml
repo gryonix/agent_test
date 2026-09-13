@@ -1,0 +1,30 @@
+services:
+  anythingllm:
+    image: mintplexlabs/anythingllm:1.16.1
+    container_name: anythingllm
+    restart: unless-stopped
+    # uid 1000, matching the directories the setup step creates.
+    # Spelled out rather than left to the image so that the host
+    # side and the container side cannot drift apart.
+    user: "1000:1000"
+    # The engine, the gateway and the vector store are separate
+    # compose projects reached over the HOST's loopback, so this
+    # name has to resolve; docker does not add it on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # The only two settings the UI must not be able to move.
+      # Everything else lives in the mounted settings file, which
+      # the container owns — see the type comment.
+      STORAGE_DIR: "/app/server/storage"
+      SERVER_PORT: 3001
+      # Chromium's own sandbox needs namespace calls docker's
+      # default seccomp profile blocks, so upstream's documented
+      # runs all add a capability instead. This buys the same
+      # feature for a far smaller grant — see the service comment.
+      ANYTHINGLLM_CHROMIUM_ARGS: "--no-sandbox"
+    volumes:
+      - /opt/anythingllm/storage:/app/server/storage
+      - /opt/anythingllm/anythingllm.env:/app/server/.env
+    ports:
+      - "127.0.0.1:8100:3001"

@@ -1,0 +1,6 @@
+[Unit]
+Description=gryonixNexus scheduled backup run
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/gryonixnexus-backup-ctl.sh run

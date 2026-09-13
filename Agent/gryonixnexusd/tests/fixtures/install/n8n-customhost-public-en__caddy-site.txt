@@ -1,0 +1,11 @@
+automation.example.com {
+    # gryonixnexus: n8n
+    @gryonixnexus_open path /webhook/* /webhook-test/*
+    handle @gryonixnexus_open {
+        reverse_proxy 127.0.0.1:8099
+    }
+    handle {
+        import /etc/caddy/gryonixnexus-admin-guard
+        reverse_proxy 127.0.0.1:8099
+    }
+}

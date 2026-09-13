@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: forgejo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: forgejo
+    volumes:
+      - /opt/forgejo/db:/var/lib/postgresql/data
+  server:
+    image: codeberg.org/forgejo/forgejo:15.0
+    container_name: forgejo
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: db:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: forgejo
+      FORGEJO__database__PASSWD: ${POSTGRES_PASSWORD}
+      FORGEJO__server__DOMAIN: git.other-company.net
+      FORGEJO__server__ROOT_URL: https://git.other-company.net/
+      FORGEJO__server__HTTP_PORT: "3000"
+      # The image runs its OWN OpenSSH on 22 (an s6 service), and
+      # Forgejo's built-in server cannot have that port: it exits
+      # with "address already in use" and systemd-restarts forever,
+      # which is what a fresh install did on 2026-08-05. The
+      # container's sshd is the path upstream's own compose takes —
+      # Forgejo writes the authorized_keys it serves.
+      FORGEJO__server__START_SSH_SERVER: "false"
+      FORGEJO__server__SSH_DOMAIN: git.other-company.net
+      FORGEJO__server__SSH_LISTEN_PORT: "22"
+      FORGEJO__server__SSH_PORT: "2222"
+      # No web installer: the setup script has already provided the
+      # database and the administrator, and an unlocked instance
+      # hands its own configuration to whoever opens the page first.
+      FORGEJO__security__INSTALL_LOCK: "true"
+      # Closed by default — this is a personal forge on a public
+      # URL. Further users are invited from Site Administration.
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+    volumes:
+      - /opt/forgejo/data:/var/lib/gitea
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "127.0.0.1:8083:3000"
+      - "2222:22"

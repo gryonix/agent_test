@@ -1,0 +1,18 @@
+
+log "REPORT"
+echo "Domain:         example.com"
+echo "PTR at your provider: 203.0.113.10 -> relay.example.com (critical for deliverability)."
+echo
+echo "Service status:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Remember the DNS records from dns-records.txt — without them Caddy cannot issue certificates."
+
+echo
+echo "=== SERVICE CREDENTIALS (save these) ==="
+echo "Jellyfin:     https://media.example.com"
+echo "  IMPORTANT: open this URL right now and finish the setup wizard — until you do, whoever opens the page becomes the administrator."
+echo "  Media library (mounted read-only): /srv/media"
+

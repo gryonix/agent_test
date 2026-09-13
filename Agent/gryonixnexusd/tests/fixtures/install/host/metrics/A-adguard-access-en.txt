@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Managed by gryonixNexus — samples host metrics every 10 seconds and keeps
+# downsampled history buckets as CSV files under /var/lib/gryonixnexus/metrics.
+# Columns: epoch,cpu%,memUsed,memTotal,diskUsed,diskTotal,netRx/s,netTx/s,
+# ioRead/s,ioWrite/s,load1,tempC. Empty field = no data for that sample.
+set -euo pipefail
+
+DIR=/var/lib/gryonixnexus/metrics
+STEP=10
+install -d -m 755 /var/lib/gryonixnexus "$DIR"
+
+cpu_ticks() { awk '$1=="cpu"{t=0; for(i=2;i<=9;i++) t+=$i; print t, $5+$6; exit}' /proc/stat; }
+mem_bytes() { awk '/^MemTotal:/{t=$2*1024} /^MemAvailable:/{a=$2*1024} END{print t-a, t}' /proc/meminfo; }
+disk_bytes() {
+  { df -B1 --output=target,size,used -x tmpfs -x devtmpfs -x overlay 2>/dev/null || true; } \
+    | awk 'NR>1 { if ($1=="/") {s=$2; u=$3; f=1} else if (!f && $2+0>s+0) {s=$2; u=$3} } END{print u+0, s+0}'
+}
+net_bytes() {
+  awk -F: 'NF==2 {name=$1; gsub(/[ \t]/,"",name); if (name=="lo") next;
+                  split($2,a," "); rx+=a[1]; tx+=a[9]} END{print rx+0, tx+0}' /proc/net/dev
+}
+io_bytes() {
+  awk '$3 ~ /^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$/ \
+         {r+=$6*512; w+=$10*512} END{print r+0, w+0}' /proc/diskstats
+}
+load_one() { awk '{print $1}' /proc/loadavg; }
+temp_c() {
+  { cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null || true; } \
+    | awk '$1>0 && $1<150000 { if ($1>m) m=$1 } END{ if (m>0) printf "%.1f", m/1000 }'
+}
+rate() { awk -v c="$1" -v p="$2" -v s="$STEP" 'BEGIN{d=c-p; if (d<0) d=0; printf "%d", d/s}'; }
+
+# Keep only the newest <max> rows of <file>.
+trim() {
+  local file=$1 max=$2 lines tmp
+  [ -f "$file" ] || return 0
+  lines=$(wc -l < "$file")
+  if [ "$lines" -gt "$max" ]; then
+    tmp=$(mktemp "$DIR/.trim.XXXXXX")
+    tail -n "$max" "$file" > "$tmp"
+    mv "$tmp" "$file"
+    chmod 644 "$file"
+  fi
+}
+
+# Average the source rows inside the just-closed <period> window and
+# append one row to <target>. No-op while the window is still open, when
+# it was already written, or when the source has no rows in it (gap).
+aggregate() {
+  local target=$1 source=$2 period=$3 keep=$4 now start last row
+  [ -f "$source" ] || return 0
+  now=$(date +%s)
+  start=$(( now / period * period - period ))
+  last=-1
+  if [ -f "$target" ]; then
+    last=$(tail -n 1 "$target" | cut -d, -f1)
+    case "$last" in ''|*[!0-9]*) last=-1 ;; esac
+  fi
+  [ "$last" -lt "$start" ] || return 0
+  row=$(awk -F, -v s="$start" -v e=$(( start + period )) '
+    $1>=s && $1<e {
+      n++
+      if ($2!="") {c+=$2; cn++}
+      mu+=$3; mt=$4; du+=$5; dt=$6
+      if ($7!="") {rx+=$7; rxn++}
+      if ($8!="") {tx+=$8; txn++}
+      if ($9!="") {ir+=$9; irn++}
+      if ($10!="") {iw+=$10; iwn++}
+      l+=$11
+      if ($12!="") {tp+=$12; tn++}
+    }
+    END {
+      if (!n) exit 0
+      printf "%d,", s
+      if (cn) printf "%.1f", c/cn
+      printf ",%d,%d,%d,%d,", mu/n, mt, du/n, dt
+      if (rxn) printf "%d", rx/rxn
+      printf ","
+      if (txn) printf "%d", tx/txn
+      printf ","
+      if (irn) printf "%d", ir/irn
+      printf ","
+      if (iwn) printf "%d", iw/iwn
+      printf ",%.2f,", l/n
+      if (tn) printf "%.1f", tp/tn
+      printf "\n"
+    }' "$source")
+  [ -n "$row" ] || return 0
+  printf '%s\n' "$row" >> "$target"
+  chmod 644 "$target"
+  trim "$target" "$keep"
+}
+
+prev_total=0 prev_idle=0 prev_rx=0 prev_tx=0 prev_ir=0 prev_iw=0 have_prev=0
+
+while :; do
+  now=$(date +%s)
+  read -r total idle < <(cpu_ticks)
+  read -r mem_used mem_total < <(mem_bytes)
+  read -r disk_used disk_total < <(disk_bytes)
+  read -r rx tx < <(net_bytes)
+  read -r io_r io_w < <(io_bytes)
+  load=$(load_one)
+  temp=$(temp_c)
+
+  cpu="" rx_rate="" tx_rate="" ir_rate="" iw_rate=""
+  if [ "$have_prev" -eq 1 ]; then
+    cpu=$(awk -v t=$((total - prev_total)) -v i=$((idle - prev_idle)) \
+      'BEGIN{ if (t>0) { p=(t-i)*100/t; if (p<0) p=0; if (p>100) p=100; printf "%.1f", p } }')
+    rx_rate=$(rate "$rx" "$prev_rx")
+    tx_rate=$(rate "$tx" "$prev_tx")
+    ir_rate=$(rate "$io_r" "$prev_ir")
+    iw_rate=$(rate "$io_w" "$prev_iw")
+  fi
+
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$now" "$cpu" "$mem_used" "$mem_total" "$disk_used" "$disk_total" \
+    "$rx_rate" "$tx_rate" "$ir_rate" "$iw_rate" "$load" "$temp" >> "$DIR/10s.csv"
+  chmod 644 "$DIR/10s.csv"
+  trim "$DIR/10s.csv" 720
+
+  aggregate "$DIR/1m.csv"  "$DIR/10s.csv" 60      720
+  aggregate "$DIR/10m.csv" "$DIR/1m.csv"  600     432
+  aggregate "$DIR/1h.csv"  "$DIR/10m.csv" 3600    336
+  aggregate "$DIR/1d.csv"  "$DIR/1h.csv"  86400   400
+  aggregate "$DIR/1w.csv"  "$DIR/1d.csv"  604800  260
+
+  prev_total=$total prev_idle=$idle prev_rx=$rx prev_tx=$tx prev_ir=$io_r prev_iw=$io_w
+  have_prev=1
+  sleep "$STEP"
+done

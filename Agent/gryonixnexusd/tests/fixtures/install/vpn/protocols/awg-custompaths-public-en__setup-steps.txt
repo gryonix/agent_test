@@ -1,0 +1,57 @@
+log "AmneziaWG VPN: starting"
+install -d /srv/awg
+cat > /srv/awg/gryonixnexus-update.sh <<'EOF_AWGVPN_UPDATE'
+#!/bin/bash
+# Managed by gryonixNexus — AmneziaWG VPN (amnezia-wg-easy) update for the Server Dashboard.
+set -euo pipefail
+cd /srv/awg
+docker compose -p awgvpn pull -q
+docker compose -p awgvpn up -d
+EOF_AWGVPN_UPDATE
+chmod 750 /srv/awg/gryonixnexus-update.sh
+cd /srv/awg
+# First run only: generate the panel password on this server and hash
+# it with the image's own wgpw tool (bcrypt); re-runs keep it.
+if [ ! -f .env ]; then
+  AWGVPN_PASSWORD="$(openssl rand -hex 12)"
+  timeout 300 docker pull -q ghcr.io/deckersu/amnezia-wg-easy:14 >/dev/null || true
+  # `wgpw` hashes the password with the image's own bcrypt. It MUST be
+  # a one-shot that exits: when the entrypoint does not recognise the
+  # sub-command it falls through to starting the panel instead — a
+  # long-running server — and the whole installation hangs here with no
+  # output (reported in the field, stuck at "AmneziaWG VPN: starting").
+  # Hence: explicit entrypoint first, plain sub-command as a fallback,
+  # and a hard timeout on both so this can never wedge the install.
+  AWGVPN_HASH=""
+  for AWGVPN_TRY in entrypoint command; do
+    if [ "$AWGVPN_TRY" = entrypoint ]; then
+      AWGVPN_OUT="$(timeout 60 docker run --rm --entrypoint wgpw ghcr.io/deckersu/amnezia-wg-easy:14 "$AWGVPN_PASSWORD" 2>/dev/null)" || AWGVPN_OUT=""
+    else
+      AWGVPN_OUT="$(timeout 60 docker run --rm ghcr.io/deckersu/amnezia-wg-easy:14 wgpw "$AWGVPN_PASSWORD" 2>/dev/null)" || AWGVPN_OUT=""
+    fi
+    # Accepts both shapes the tool has used: PASSWORD_HASH='<hash>'
+    # and a bare hash line. Quotes are stripped rather than matched, so
+    # no `$` of the bcrypt hash has to survive shell quoting here.
+    AWGVPN_HASH="$(printf '%s' "$AWGVPN_OUT" | head -n1 | sed "s/^PASSWORD_HASH=//" | tr -d "'")"
+    # Anything that is not a bcrypt hash is not an answer.
+    case "$AWGVPN_HASH" in '$2'*) break ;; *) AWGVPN_HASH="" ;; esac
+  done
+  if [ -n "$AWGVPN_HASH" ]; then
+    printf 'ADMIN_PASSWORD=%s\nPASSWORD_HASH=%s\n' "$AWGVPN_PASSWORD" "$AWGVPN_HASH" > .env
+  else
+    # No hash: the stock panel starts without a password. It binds
+    # loopback only and nothing proxies it — clients are managed from
+    # the unified VPN panel — so this is a degraded but working VPN,
+    # which beats an installation that never finishes.
+    log "AmneziaWG: could not hash a panel password (the image's wgpw tool did not answer) — its built-in panel stays open on localhost only. The VPN itself works; manage clients at vpn.<domain>."
+    printf 'ADMIN_PASSWORD=%s\nPASSWORD_HASH=\n' "$AWGVPN_PASSWORD" > .env
+  fi
+fi
+# docker compose interpolates $ inside .env values, so the bcrypt
+# hash must carry $$ or it reaches the container mangled (the WARN
+# "variable is not set" flood). Idempotent: runs of $ collapse to $$,
+# an already escaped hash is left as is; also repairs pre-fix installs.
+sed -i '/^PASSWORD_HASH=/s/\$\{1,\}/$$/g' .env
+chmod 600 .env
+docker compose -p awgvpn pull -q
+docker compose -p awgvpn up -d

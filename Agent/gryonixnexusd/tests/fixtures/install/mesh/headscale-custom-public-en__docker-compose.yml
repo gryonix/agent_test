@@ -1,0 +1,18 @@
+services:
+  headscale:
+    image: headscale/headscale:v0.29.3
+    container_name: headscale
+    restart: unless-stopped
+    command: serve
+    volumes:
+      - /srv/mesh/config:/etc/headscale
+      - /srv/mesh/data:/var/lib/headscale
+    ports:
+      # Loopback only: Caddy terminates TLS in front of it, which
+      # also puts it under the lockdown guard like every other UI.
+      # The clients REQUIRE the control server over HTTPS, and the
+      # certificate is Caddy's.
+      - "127.0.0.1:8091:8080"
+      # Public on purpose — STUN for the embedded DERP relay. A
+      # relay only reachable from this host relays nothing.
+      - "3478:3478/udp"

@@ -1,0 +1,66 @@
+log "Headscale: запуск"
+install -d -m 755 /opt/headscale/config /opt/headscale/data
+# Written every run: the file is ours, and a domain or hostname
+# change has to reach it. Headscale generates its own noise key
+# into the data directory on first start and never rewrites it.
+cat > /opt/headscale/config/config.yaml <<'EOF_HEADSCALE'
+server_url: https://mesh.example.com
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 127.0.0.1:9090
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+derp:
+  server:
+    # The point of self-hosting: without this, a node that cannot
+    # reach its peer directly falls back to Tailscale's public
+    # relays. Measured — a lab node reported a relay region abroad
+    # while this was off.
+    enabled: true
+    region_id: 999
+    region_code: "gryonix"
+    region_name: "mesh.example.com"
+    stun_listen_addr: "0.0.0.0:3478"
+    private_key_path: /var/lib/headscale/derp_server_private.key
+  # No public relay map: everything stays on this host.
+  urls: []
+  auto_update_enabled: false
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+log:
+  level: info
+dns:
+  magic_dns: true
+  base_domain: ts.example.com
+  # Service names inside the mesh, pointed at this server's own
+  # mesh address. A separate FILE rather than an inline
+  # `extra_records` block (the two are mutually exclusive) because
+  # the addresses are not known now: a node's mesh address is
+  # handed out when it joins, which is after this file is written.
+  # Headscale watches the file and picks up changes without a
+  # restart — measured on v0.29.3, along with the other half of
+  # that behaviour: it REFUSES TO START if the path is missing,
+  # which is why the empty file below is written before `up`.
+  extra_records_path: /etc/headscale/extra-records.json
+  nameservers:
+    global:
+      - 1.1.1.1
+policy:
+  mode: database
+EOF_HEADSCALE
+chmod 600 /opt/headscale/config/config.yaml
+# Created only when ABSENT, unlike config.yaml: this file holds the
+# published names, and rewriting it on every run would drop them on
+# the next re-install.
+if [ ! -f /opt/headscale/config/extra-records.json ]; then
+  printf '[]\\n' > /opt/headscale/config/extra-records.json
+  chmod 644 /opt/headscale/config/extra-records.json
+fi
+cd /opt/headscale
+docker compose -p headscale pull -q
+docker compose -p headscale up -d

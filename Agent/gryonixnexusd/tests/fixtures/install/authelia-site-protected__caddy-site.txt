@@ -1,0 +1,9 @@
+dns.example.com {
+    # gryonixnexus: adguard-home
+    import /etc/caddy/gryonixnexus-admin-guard
+    forward_auth 127.0.0.1:8094 {
+        uri /api/authz/forward-auth
+        copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+    }
+    reverse_proxy 127.0.0.1:8087
+}

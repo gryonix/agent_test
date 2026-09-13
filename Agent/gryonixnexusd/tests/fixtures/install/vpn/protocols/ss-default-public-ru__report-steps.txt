@@ -1,0 +1,7 @@
+echo "Shadowsocks: vpn.example.com:8388 (TCP+UDP)"
+SS_PW="$(sed -n 's/.*"password"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /opt/shadowsocks/config.json)"
+SS_ENC="$(printf '%s' "$SS_PW" | sed -e 's/+/%2B/g' -e 's#/#%2F#g' -e 's/=/%3D/g')"
+echo "  Ссылка для подключения (ss://) для клиентов:"
+echo "  ss://2022-blake3-aes-256-gcm:${SS_ENC}@vpn.example.com:8388#gryonixNexus"
+echo "  Вставьте ссылку ss:// в клиент Outline / Shadowsocks или сделайте из неё QR-код."
+echo "  Примечание: админ-панели (почта, облако, фото, vault) доступны ТОЛЬКО через WireGuard — создайте клиента WireGuard в VPN-панели и подключитесь им для управления. AmneziaWG и этот протокол предназначены для обычного доступа в интернет, до админ-панелей они не доходят."

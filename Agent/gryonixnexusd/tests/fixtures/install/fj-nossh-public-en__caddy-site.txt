@@ -1,0 +1,5 @@
+git.example.com {
+    # gryonixnexus: forgejo
+    import /etc/caddy/gryonixnexus-admin-guard
+    reverse_proxy 127.0.0.1:8083
+}

@@ -1,0 +1,55 @@
+services:
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    command: --transaction-isolation=READ-COMMITTED --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --max-connections=512 --innodb-rollback-on-timeout=OFF --innodb-lock-wait-timeout=120
+    environment:
+      MARIADB_AUTO_UPGRADE: "1"
+      MARIADB_INITDB_SKIP_TZINFO: "1"
+      # The MYSQL_* spellings, not upstream's MARIADB_*: the shared
+      # backup wrapper dumps a database by reading
+      # MYSQL_ROOT_PASSWORD and MYSQL_DATABASE out of the
+      # container's OWN environment (a password passed from the
+      # host would sit in the argv of docker exec, readable from
+      # /proc). The image accepts both spellings; only one of them
+      # makes the backup work.
+      MYSQL_DATABASE: photoprism
+      MYSQL_USER: photoprism
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - /opt/photoprism/db:/var/lib/mysql
+  photoprism:
+    image: photoprism/photoprism:260728
+    container_name: photoprism
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    working_dir: "/photoprism"
+    environment:
+      PHOTOPRISM_ADMIN_USER: admin
+      PHOTOPRISM_ADMIN_PASSWORD: ${PHOTOPRISM_ADMIN_PASSWORD}
+      # Password auth, never the public mode: this is a public
+      # hostname, and "public" means the library is too.
+      PHOTOPRISM_AUTH_MODE: "password"
+      PHOTOPRISM_SITE_URL: "https://photos.example.com/"
+      # Caddy terminates TLS and speaks plain HTTP to this port;
+      # left at its default PhotoPrism would serve its own
+      # self-signed certificate and the proxy would not trust it.
+      PHOTOPRISM_DISABLE_TLS: "true"
+      PHOTOPRISM_DEFAULT_TLS: "false"
+      PHOTOPRISM_DATABASE_DRIVER: "mysql"
+      PHOTOPRISM_DATABASE_SERVER: "mariadb:3306"
+      PHOTOPRISM_DATABASE_NAME: "photoprism"
+      PHOTOPRISM_DATABASE_USER: "photoprism"
+      PHOTOPRISM_DATABASE_PASSWORD: ${MYSQL_PASSWORD}
+      # Sidecar YAML on: it is what lets the metadata be rebuilt
+      # from the originals alone, and the originals are what the
+      # backup carries.
+      PHOTOPRISM_SIDECAR_YAML: "true"
+      PHOTOPRISM_BACKUP_ALBUMS: "true"
+    volumes:
+      - /opt/photoprism/originals:/photoprism/originals
+      - /opt/photoprism/storage:/photoprism/storage
+    ports:
+      - "127.0.0.1:2342:2342"

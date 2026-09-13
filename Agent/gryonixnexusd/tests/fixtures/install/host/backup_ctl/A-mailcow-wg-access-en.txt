@@ -1,0 +1,520 @@
+#!/bin/bash
+# Managed by gryonixNexus — backup housekeeping for the Server Dashboard.
+# Usage: gryonixnexus-backup-ctl.sh delete <path>
+#        gryonixnexus-backup-ctl.sh set-schedule <off|every:<n><h|d>@<HH:MM>> <retention> [services...]
+#        gryonixnexus-backup-ctl.sh set-passphrase   (passphrase on stdin)
+#        gryonixnexus-backup-ctl.sh run
+#        gryonixnexus-backup-ctl.sh backup <service> [--encrypt|--no-encrypt]
+#                                       (GPG passphrase on stdin when encrypting)
+#        gryonixnexus-backup-ctl.sh estimate <service>
+set -euo pipefail
+
+ACTION="${1:-}"
+CONFIG='/etc/gryonixnexus/autobackup.conf'
+PASSFILE='/etc/gryonixnexus/autobackup.pass'
+RETENTION=7
+SERVICES='mailcow vaultwarden nextcloud immich vpn-panel'
+SCHEDULE=off
+# The control user. Finished archives are chowned to it: the app
+# downloads and shares them, and what keeps other accounts away is the
+# 0750 on the enclosing backup root, not the file's owner.
+OWNER='admin'
+# Encryption state of the CURRENT run. The passphrase lives in a shell
+# variable and reaches gpg down a pipe — never in argv, which is
+# world-readable through /proc.
+GD_ENCRYPT=0
+GD_PASS=""
+
+load_config() {
+  # shellcheck disable=SC1090
+  [ -f "$CONFIG" ] && . "$CONFIG"
+  # A config from an older build may not set every value.
+  : "${SCHEDULE:=off}" "${RETENTION:=7}" "${SERVICES:=mailcow vaultwarden nextcloud immich vpn-panel}"
+}
+
+# --- per-service locking (see LockSections) --------------------------
+
+GD_LOCK_BUSY=75
+
+gd_with_lock() {
+  local id="$1"
+  shift
+  install -d -m 700 '/var/lib/gryonixnexus/locks'
+  local fd
+  exec {fd}>"/var/lib/gryonixnexus/locks/$id.lock"
+  if ! flock -n "$fd"; then
+    echo "$id: another backup or update for this service is already running, skipping" >&2
+    return "$GD_LOCK_BUSY"
+  fi
+  "$@"
+}
+
+# --- helpers shared by every generated service body -----------------
+
+gd_compose_stop() {
+  local project="$1"
+  shift
+  docker compose -p "$project" stop "$@" >/dev/null 2>&1 || true
+}
+
+gd_compose_start() {
+  local project="$1"
+  shift
+  docker compose -p "$project" start "$@" >/dev/null 2>&1 || true
+}
+
+# Container id of one compose service; empty when it is not running.
+gd_container() {
+  docker compose -p "$1" ps -q "$2" 2>/dev/null | head -n 1
+}
+
+# A tar of a live database directory is a corrupt backup, so the
+# database is dumped through its own client instead. The credentials
+# come from the container's OWN environment — compose already put them
+# there — because passing them from here would place the password in
+# the argv of `docker exec`, readable by every account on the host.
+gd_dump_postgres() {
+  local cid
+  cid="$(gd_container "$1" "$2")"
+  if [ -z "$cid" ]; then
+    echo "the $1 database container is not running" >&2
+    return 1
+  fi
+  if ! docker exec "$cid" sh -c \
+       'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump --clean --if-exists -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+       > "$3"; then
+    echo "the $1 database dump failed" >&2
+    return 1
+  fi
+  [ -s "$3" ] || { echo "the $1 database dump is empty" >&2; return 1; }
+}
+
+# --single-transaction is what makes a dump of a RUNNING InnoDB
+# database trustworthy: one consistent snapshot, no instance-wide lock.
+# mariadb-dump on current images, mysqldump on older ones.
+#
+# A fourth argument names the database explicitly, for a service that
+# keeps several in one engine and whose container therefore sets no
+# MYSQL_DATABASE at all; without it the container's own variable is
+# used, as it always was. Only the NAME travels here — the password is
+# still read inside the container, never put in the argv of docker exec
+# where /proc hands it to every account on the host.
+gd_dump_mysql() {
+  local cid
+  cid="$(gd_container "$1" "$2")"
+  if [ -z "$cid" ]; then
+    echo "the $1 database container is not running" >&2
+    return 1
+  fi
+  if ! docker exec "$cid" sh -c \
+       'if command -v mariadb-dump >/dev/null 2>&1; then D=mariadb-dump; else D=mysqldump; fi; MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$D" --single-transaction --quick -u root "${1:-$MYSQL_DATABASE}"' \
+       sh "${4:-}" > "$3"; then
+    echo "the $1 database dump failed" >&2
+    return 1
+  fi
+  [ -s "$3" ] || { echo "the $1 database dump is empty" >&2; return 1; }
+}
+
+# Keeps the newest RETENTION archives of one service — encrypted and
+# plain together, they are one series. The pipeline is guarded: with
+# fewer archives than RETENTION `ls` finds nothing to list and would
+# fail the whole run under pipefail, which is every first run.
+gd_rotate() {
+  { ls -1t "$1/$2"-*.tar.gz "$1/$2"-*.tar.gz.gpg 2>/dev/null || true; } \
+    | tail -n +$((RETENTION + 1)) | xargs -r rm -f
+}
+
+# Encrypt (or not), put the archive in place, rotate, announce.
+gd_finish() {
+  local name="$1" dir="$2" plain="$3" work="$4" out=""
+  if [ ! -s "$plain" ]; then
+    rm -rf "$work"
+    echo "the $name archive is empty" >&2
+    return 1
+  fi
+  if [ "$GD_ENCRYPT" -eq 1 ]; then
+    out="$dir/$(basename "$plain").gpg"
+    if ! printf '%s' "$GD_PASS" | gpg --batch --quiet --yes --symmetric \
+         --cipher-algo AES256 --passphrase-fd 0 --pinentry-mode loopback \
+         --output "$out" "$plain"; then
+      rm -rf "$work"
+      echo "could not encrypt the $name backup" >&2
+      return 1
+    fi
+  else
+    out="$dir/$(basename "$plain")"
+    mv "$plain" "$out"
+  fi
+  # The plain archive never outlives the encrypted one.
+  rm -rf "$work"
+  chmod 600 "$out"
+  chown "$OWNER" "$out" 2>/dev/null || true
+  gd_rotate "$dir" "$name"
+  # A streamed command carries no exit status back to the app, so the
+  # archive announces itself: marker, size in bytes, path.
+  printf '%s %s %s\n' 'GRYONIXNEXUS_BACKUP_DONE' \
+    "$(stat -c %s "$out" 2>/dev/null || echo 0)" "$out"
+}
+
+# --- per-service bodies (generated from each service's BackupSpec) ---
+
+backup_mailcow() {
+  '/opt/mailcow-dockerized/bot-backup.sh'
+}
+
+backup_vaultwarden() {
+  local stamp plain
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  plain='/opt/backups/vaultwarden/vaultwarden-backup.tar.gz'
+  docker stop 'vaultwarden' >/dev/null 2>&1 || true
+  tar -czf "$plain" '/opt/vaultwarden/data' 2>/dev/null || true
+  # The container comes back up no matter what the archive did.
+  docker start 'vaultwarden' >/dev/null 2>&1 || true
+  [ -s "$plain" ] || { echo "vaultwarden archive is empty" >&2; return 1; }
+  if ! printf '%s' "$GD_PASS" | gpg --batch --quiet --yes --symmetric \
+       --cipher-algo AES256 --passphrase-fd 0 --pinentry-mode loopback \
+       --output "$plain.$stamp.gpg" "$plain"; then
+    rm -f "$plain"
+    echo "could not encrypt the vaultwarden backup" >&2
+    return 1
+  fi
+  # The plain archive never outlives the encrypted one.
+  rm -f "$plain"
+  chmod 600 "$plain.$stamp.gpg"
+  chown "$OWNER" "$plain.$stamp.gpg" 2>/dev/null || true
+  # Rotation: keep the newest RETENTION encrypted archives. The
+  # pipeline is guarded — with fewer archives than RETENTION,
+  # `ls` finds nothing to list and would fail the whole run
+  # under pipefail (which is every first run).
+  { ls -1t '/opt/backups/vaultwarden'/*.gpg 2>/dev/null || true; } \
+    | tail -n +$((RETENTION + 1)) | xargs -r rm -f
+  printf '%s %s %s\n' 'GRYONIXNEXUS_BACKUP_DONE' \
+    "$(stat -c %s "$plain.$stamp.gpg" 2>/dev/null || echo 0)" "$plain.$stamp.gpg"
+}
+
+backup_nextcloud() {
+  local stamp work plain rc=0
+  install -d -m 750 '/opt/backups/nextcloud'
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  work="$(mktemp -d '/opt/backups/nextcloud/.work-XXXXXX')"
+  plain="$work/nextcloud-$stamp.tar.gz"
+  install -d -m 700 "$work/gryonixnexus-db"
+  if [ ! -d '/opt/nextcloud/data' ]; then
+    rm -rf "$work"
+    echo "nextcloud has no data at /opt/nextcloud/data" >&2
+    return 1
+  fi
+  # Stopped for the archive only, and started again on EVERY path
+  # below — a backup that leaves the service down is an outage.
+  gd_compose_stop 'nextcloud' 'app'
+  gd_dump_mysql 'nextcloud' 'db' "$work/gryonixnexus-db/nextcloud.sql" || rc=1
+  if [ "$rc" -eq 0 ]; then
+    tar --numeric-owner -czf "$plain" \
+        -C '/opt/nextcloud' 'data' \
+        -C "$work" 'gryonixnexus-db' || rc=1
+  fi
+  gd_compose_start 'nextcloud' 'app'
+  if [ "$rc" -ne 0 ]; then
+    rm -rf "$work"
+    echo "nextcloud backup failed" >&2
+    return 1
+  fi
+  gd_finish 'nextcloud' '/opt/backups/nextcloud' "$plain" "$work"
+}
+
+backup_immich() {
+  local stamp work plain rc=0
+  install -d -m 750 '/opt/backups/immich'
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  work="$(mktemp -d '/opt/backups/immich/.work-XXXXXX')"
+  plain="$work/immich-$stamp.tar.gz"
+  install -d -m 700 "$work/gryonixnexus-db"
+  if [ ! -d '/opt/immich/library' ]; then
+    rm -rf "$work"
+    echo "immich has no data at /opt/immich/library" >&2
+    return 1
+  fi
+  gd_dump_postgres 'immich' 'database' "$work/gryonixnexus-db/immich.sql" || rc=1
+  if [ "$rc" -eq 0 ]; then
+    tar --numeric-owner -czf "$plain" \
+        -C '/opt/immich' 'library' \
+        -C "$work" 'gryonixnexus-db' || rc=1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    rm -rf "$work"
+    echo "immich backup failed" >&2
+    return 1
+  fi
+  gd_finish 'immich' '/opt/backups/immich' "$plain" "$work"
+}
+
+backup_vpn_panel() {
+  local stamp work plain rc=0
+  install -d -m 750 '/opt/backups/vpn-panel'
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  work="$(mktemp -d '/opt/backups/vpn-panel/.work-XXXXXX')"
+  plain="$work/vpn-panel-$stamp.tar.gz"
+  install -d -m 700 "$work/gryonixnexus-db"
+  if [ ! -d '/opt/gryonix-vpn-panel/data' ]; then
+    rm -rf "$work"
+    echo "vpn-panel has no data at /opt/gryonix-vpn-panel/data" >&2
+    return 1
+  fi
+  # Stopped for the archive only, and started again on EVERY path
+  # below — a backup that leaves the service down is an outage.
+  gd_compose_stop 'vpnpanel' 'vpnpanel'
+  if [ "$rc" -eq 0 ]; then
+    tar --numeric-owner -czf "$plain" \
+        -C '/opt/gryonix-vpn-panel' 'data' \
+        -C "$work" 'gryonixnexus-db' || rc=1
+  fi
+  gd_compose_start 'vpnpanel' 'vpnpanel'
+  if [ "$rc" -ne 0 ]; then
+    rm -rf "$work"
+    echo "vpn-panel backup failed" >&2
+    return 1
+  fi
+  gd_finish 'vpn-panel' '/opt/backups/vpn-panel' "$plain" "$work"
+}
+
+# The ONE dispatch both callers go through: the timer's `run` and the
+# app's `backup`. Two copies of these bodies is exactly the drift this
+# wrapper exists to prevent.
+gd_run_service() {
+  case "$1" in
+    mailcow) gd_with_lock 'backup-mailcow' backup_mailcow ;;
+    vaultwarden) gd_with_lock 'backup-vaultwarden' backup_vaultwarden ;;
+    nextcloud) gd_with_lock 'backup-nextcloud' backup_nextcloud ;;
+    immich) gd_with_lock 'backup-immich' backup_immich ;;
+    vpn-panel) gd_with_lock 'backup-vpn-panel' backup_vpn_panel ;;
+    *) echo "unsupported service: $1" >&2; return 2 ;;
+  esac
+}
+
+# Whether a run of this service encrypts unless the caller says
+# otherwise. Secret stores yes; bulk media no — GPG over a photo
+# library costs hours of CPU on a Raspberry Pi.
+gd_default_encrypt() {
+  case "$1" in
+    mailcow) echo 0 ;;
+    vaultwarden) echo 1 ;;
+    nextcloud) echo 0 ;;
+    immich) echo 0 ;;
+    vpn-panel) echo 1 ;;
+    *) echo 0 ;;
+  esac
+}
+
+do_delete() {
+  local path="${1:-}"
+  # The path must sit inside a backup directory this deployment owns.
+  # Without the check a whitelisted wrapper would delete ANY file.
+  case "$path" in
+    *..*) echo "invalid path: ${path}" >&2; exit 2 ;;
+  esac
+  case "$path" in
+    "/opt/backups/mailcow"/*|"/opt/backups/vaultwarden"/*|"/opt/backups/nextcloud"/*|"/opt/backups/immich"/*|"/opt/backups/vpn-panel"/*) ;;
+    *) echo "path outside the backup directories: ${path}" >&2; exit 2 ;;
+  esac
+  [ -e "$path" ] || { echo "no such backup: ${path}" >&2; exit 2; }
+  rm -rf "$path"
+}
+
+do_run() {
+  load_config
+  local failed=""
+  for svc in $SERVICES; do
+    # Each service runs in its own subshell, and the `||` keeps errexit
+    # from firing on a failure: an unattended run must not let one
+    # broken service cancel the backups of every service after it.
+    (
+      GD_ENCRYPT="$(gd_default_encrypt "$svc")"
+      GD_PASS=""
+      if [ "$GD_ENCRYPT" -eq 1 ]; then
+        # Unattended, so there is nobody to ask: the stored passphrase
+        # is the only source. Without it the service refuses rather
+        # than quietly writing its secrets out in the clear.
+        if [ ! -s "$PASSFILE" ]; then
+          echo "no backup passphrase stored for $svc" >&2
+          exit 1
+        fi
+        GD_PASS="$(cat "$PASSFILE")"
+      fi
+      gd_run_service "$svc"
+    ) || failed="$failed $svc"
+  done
+  if [ -n "$failed" ]; then
+    echo "backup failed for:$failed" >&2
+    exit 1
+  fi
+}
+
+# One service, on demand. Same bodies the timer runs; the only
+# difference is where the passphrase comes from.
+do_backup() {
+  local svc="${1:-}"
+  shift || true
+  load_config
+  GD_ENCRYPT="$(gd_default_encrypt "$svc")"
+  for arg in "$@"; do
+    case "$arg" in
+      --encrypt) GD_ENCRYPT=1 ;;
+      --no-encrypt) GD_ENCRYPT=0 ;;
+      *) echo "unsupported option: ${arg}" >&2; exit 2 ;;
+    esac
+  done
+  if [ "$GD_ENCRYPT" -eq 1 ]; then
+    # On stdin, never argv. A terminal means nobody piped anything in,
+    # and reading would hang forever.
+    if [ ! -t 0 ]; then GD_PASS="$(cat)"; fi
+    # No passphrase given: fall back to the stored one, so an
+    # encrypted run is possible without re-typing it.
+    if [ -z "$GD_PASS" ] && [ -s "$PASSFILE" ]; then GD_PASS="$(cat "$PASSFILE")"; fi
+    if [ -z "$GD_PASS" ]; then
+      echo "an encrypted backup needs a passphrase on stdin" >&2
+      exit 2
+    fi
+  fi
+  gd_run_service "$svc"
+}
+
+# What a backup of this service would cost, in bytes, and what the
+# backup filesystem still has free. Read-only, and the only reason the
+# app can warn BEFORE starting an hours-long run.
+do_estimate() {
+  local svc="${1:-}" dir="" total=0 free="" sz=""
+  local -a paths=()
+  case "$svc" in
+    mailcow) dir='/opt/backups/mailcow'; paths=('/opt/mailcow-dockerized' '/var/lib/docker/volumes/mailcowdockerized_'*) ;;
+    vaultwarden) dir='/opt/backups/vaultwarden'; paths=('/opt/vaultwarden/data') ;;
+    nextcloud) dir='/opt/backups/nextcloud'; paths=('/opt/nextcloud/data' '/opt/nextcloud/db') ;;
+    immich) dir='/opt/backups/immich'; paths=('/opt/immich/library' '/opt/immich/postgres') ;;
+    vpn-panel) dir='/opt/backups/vpn-panel'; paths=('/opt/gryonix-vpn-panel/data') ;;
+    *) echo "unsupported service: ${svc}" >&2; exit 2 ;;
+  esac
+  install -d -m 750 "$dir"
+  local p
+  for p in "${paths[@]}"; do
+    [ -e "$p" ] || continue
+    sz="$(du -sb "$p" 2>/dev/null | cut -f1)" || sz=""
+    total=$((total + ${sz:-0}))
+  done
+  free="$(df -B1 --output=avail "$dir" 2>/dev/null | tail -n 1 | tr -cd '0-9')"
+  printf '%s %s %s\n' 'GRYONIXNEXUS_BACKUP_ESTIMATE' "$total" "${free:-0}"
+}
+
+do_set_schedule() {
+  # <schedule> is `off` or `every:<n><unit>@<HH:MM>` — the interval and
+  # the time of day the user picked. Parsed here rather than taking a
+  # raw OnCalendar expression: the wrapper is whitelisted in sudoers,
+  # so it must not accept arbitrary systemd input from the client.
+  local schedule="${1:-off}" retention="${2:-7}"
+  shift 2 || true
+  local services="$*"
+  local oncal=""
+  case "$schedule" in
+    off) ;;
+    every:*)
+      local spec="${schedule#every:}"
+      local every="${spec%@*}" at="${spec#*@}"
+      local n="${every%[hd]}" unit="${every##*[0-9]}"
+      case "$n" in
+        ''|*[!0-9]*) echo "invalid interval: ${every}" >&2; exit 2 ;;
+      esac
+      [ "$n" -ge 1 ] || { echo "invalid interval: ${every}" >&2; exit 2; }
+      case "$at" in
+        [0-2][0-9]:[0-5][0-9]) ;;
+        *) echo "invalid time: ${at}" >&2; exit 2 ;;
+      esac
+      [ "${at%%:*}" -le 23 ] || { echo "invalid time: ${at}" >&2; exit 2; }
+      case "$unit" in
+        h)
+          # Every n hours, aligned to the chosen minute.
+          if [ "$n" -ge 24 ]; then
+            oncal="*-*-* ${at}:00"
+          else
+            oncal="*-*-* 00/${n}:${at#*:}:00"
+          fi
+          ;;
+        d)
+          # Every n days at the chosen time. systemd has no "every n
+          # days" for n > 1, so those run daily-aligned on a day step.
+          if [ "$n" -le 1 ]; then
+            oncal="*-*-* ${at}:00"
+          else
+            oncal="*-*-01/${n} ${at}:00"
+          fi
+          ;;
+        *) echo "invalid interval unit: ${every}" >&2; exit 2 ;;
+      esac
+      ;;
+    *) echo "unsupported schedule: ${schedule}" >&2; exit 2 ;;
+  esac
+  case "$retention" in
+    ''|*[!0-9]*) echo "invalid retention: ${retention}" >&2; exit 2 ;;
+  esac
+  [ "$retention" -ge 1 ] || { echo "invalid retention: ${retention}" >&2; exit 2; }
+  # Only services this wrapper knows about may end up in the config.
+  local checked=""
+  for svc in $services; do
+    for known in mailcow vaultwarden nextcloud immich vpn-panel; do
+      if [ "$svc" = "$known" ]; then checked="$checked $svc"; fi
+    done
+  done
+  install -d -m 755 "$(dirname "$CONFIG")"
+  cat > "$CONFIG" <<EOF_CONF
+SCHEDULE=$schedule
+RETENTION=$retention
+SERVICES='${checked# }'
+EOF_CONF
+  # World-readable on purpose: it holds no secrets (the passphrase is
+  # a separate 0600 file) and the app reads it without sudo.
+  chmod 644 "$CONFIG"
+  if [ "$schedule" = "off" ]; then
+    systemctl disable --now 'gryonixnexus-autobackup.timer' >/dev/null 2>&1 || true
+  else
+    mkdir -p /etc/systemd/system
+    cat > /etc/systemd/system/gryonixnexus-autobackup.timer <<EOF_TIMER
+[Unit]
+Description=gryonixNexus scheduled backups
+[Timer]
+OnCalendar=$oncal
+# Servers are not up 24/7 — a missed window must still run.
+Persistent=true
+# Small jitter only: the user picked a specific time, so the run must
+# not wander an hour away from it.
+RandomizedDelaySec=5m
+[Install]
+WantedBy=timers.target
+EOF_TIMER
+    systemctl daemon-reload
+    # A bad OnCalendar would leave the timer permanently inactive —
+    # catch it here, while the app is still listening. Only when the
+    # tool is actually present: its ABSENCE must not reject a schedule
+    # that is fine (minimal images ship without systemd-analyze).
+    if command -v systemd-analyze >/dev/null 2>&1; then
+      if ! systemd-analyze calendar "$oncal" >/dev/null 2>&1; then
+        echo "invalid schedule expression: ${oncal}" >&2; exit 2
+      fi
+    fi
+    systemctl enable --now 'gryonixnexus-autobackup.timer' >/dev/null 2>&1 || true
+  fi
+}
+
+do_set_passphrase() {
+  install -d -m 755 "$(dirname '/etc/gryonixnexus/autobackup.pass')"
+  # From stdin, never argv: argv is world-readable in /proc.
+  cat > '/etc/gryonixnexus/autobackup.pass'
+  chmod 600 '/etc/gryonixnexus/autobackup.pass'
+}
+
+case "$ACTION" in
+  delete) do_delete "${2:-}" ;;
+  run) do_run ;;
+  backup) shift; do_backup "$@" ;;
+  estimate) do_estimate "${2:-}" ;;
+  set-schedule) shift; do_set_schedule "$@" ;;
+  set-passphrase) do_set_passphrase ;;
+  *) echo "unsupported action: ${ACTION}" >&2; exit 2 ;;
+esac
+echo 'GRYONIXNEXUS_BACKUP_CTL_DONE'

@@ -1,0 +1,32 @@
+#!/bin/bash
+# Managed by gryonixNexus — mirrors the main routing table's
+# locally-connected routes (Docker's bridges included) into a
+# policy-routing table that defaults via the tunnel, so a relayed
+# connection's reply — marked by nftables' prerouting chain — finds
+# its way back through wg0 instead of the home ISP's default
+# gateway, while traffic actually destined for a container (the other
+# leg of the very same DNATed connection) still reaches the local
+# bridge. Re-run periodically (see the .timer unit): Docker creates
+# and destroys bridges as services are installed and removed.
+set -euo pipefail
+
+TABLE=100
+MARK=0x1
+
+ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
+ip rule add fwmark "$MARK" table "$TABLE"
+
+ip route flush table "$TABLE" 2>/dev/null || true
+# Mirror every locally-connected route (Docker's bridges included) so
+# relayed traffic whose real destination is a container keeps going
+# there; only a genuine default-route destination falls to the
+# tunnel. Word-splitting on $route is deliberate: each line from
+# `ip route show` is a multi-field route spec that `ip route add`
+# expects as separate arguments.
+while IFS= read -r route; do
+  [ -n "$route" ] || continue
+  # shellcheck disable=SC2086
+  ip route add $route table "$TABLE" 2>/dev/null || true
+done < <(ip route show table main | grep -v '^default ' || true)
+
+ip route add default dev "wg0" table "$TABLE"

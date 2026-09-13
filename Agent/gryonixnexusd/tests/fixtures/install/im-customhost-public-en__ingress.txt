@@ -1,0 +1,4 @@
+hostname=gallery.example.com
+upstreamPort=2283
+adminGuard=true
+upstreamHTTPS=false

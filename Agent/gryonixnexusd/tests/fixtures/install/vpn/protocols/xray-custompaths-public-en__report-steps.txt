@@ -1,0 +1,5 @@
+echo "VLESS/Reality: vpn.example.com:9443 (TCP)"
+echo "  Connection link (vless://) for clients:"
+echo "  $(cat /srv/xray/link.txt)"
+echo "  Paste the vless:// link into an Xray client (v2rayN, Streisand, Hiddify), or turn it into a QR code."
+echo "  Note: the admin panels (mail, cloud, photos, vault) are reachable ONLY over WireGuard — add a WireGuard client in the VPN panel and connect with it to manage them. AmneziaWG and this protocol are for general internet access; they do not reach the admin panels."

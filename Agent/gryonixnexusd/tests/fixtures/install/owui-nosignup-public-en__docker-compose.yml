@@ -1,0 +1,20 @@
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.3
+    container_name: open-webui
+    restart: unless-stopped
+    # Reaching the engine on the host's own loopback needs this
+    # name resolved; docker does not add it on Linux by itself.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      WEBUI_URL: "https://ai.example.com"
+      # Session signing key. Generated on the server — regenerating
+      # it on every start would sign every existing session out.
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      ENABLE_SIGNUP: "false"
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+    volumes:
+      - /opt/open-webui/data:/app/backend/data
+    ports:
+      - "127.0.0.1:8097:8080"

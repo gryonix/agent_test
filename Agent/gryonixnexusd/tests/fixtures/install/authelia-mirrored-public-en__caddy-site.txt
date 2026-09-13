@@ -1,0 +1,4 @@
+auth.example.com, auth.example.org {
+    # gryonixnexus: authelia
+    reverse_proxy 127.0.0.1:8094
+}

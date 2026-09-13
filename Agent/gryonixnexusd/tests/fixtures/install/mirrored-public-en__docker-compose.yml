@@ -1,0 +1,15 @@
+services:
+  adguardhome:
+    image: adguard/adguardhome:v0.107.78
+    container_name: adguardhome
+    restart: unless-stopped
+    volumes:
+      - /opt/adguardhome/conf:/opt/adguardhome/conf
+      - /opt/adguardhome/work:/opt/adguardhome/work
+    ports:
+      - "127.0.0.1:8087:3000"
+      # Loopback ONLY — see the type comment. A published port is
+      # reachable from the internet regardless of our nftables
+      # ruleset, so an open resolver is prevented here or nowhere.
+      - "127.0.0.1:53:53/tcp"
+      - "127.0.0.1:53:53/udp"

@@ -1,0 +1,19 @@
+#!/bin/bash
+# Managed by gryonixNexus — per-container control for the Server Dashboard.
+# Usage: gryonixnexus-container-ctl.sh <start|stop|restart> <container>
+# Whitelisted once in sudoers; validates its arguments before docker.
+set -euo pipefail
+ACTION="${1:-}"
+NAME="${2:-}"
+case "$ACTION" in
+  start|stop|restart) ;;
+  *) echo "unsupported action: ${ACTION}" >&2; exit 2 ;;
+esac
+case "$NAME" in
+  [A-Za-z0-9]*) ;;
+  *) echo "invalid container name: ${NAME}" >&2; exit 2 ;;
+esac
+case "$NAME" in
+  *[!A-Za-z0-9_.-]*) echo "invalid container name: ${NAME}" >&2; exit 2 ;;
+esac
+exec docker "$ACTION" "$NAME"

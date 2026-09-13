@@ -1,0 +1,4 @@
+hostname=secrets.example.com
+upstreamPort=8089
+adminGuard=true
+upstreamHTTPS=false

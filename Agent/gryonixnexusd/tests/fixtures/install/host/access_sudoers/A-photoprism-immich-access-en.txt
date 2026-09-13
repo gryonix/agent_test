@@ -1,0 +1,30 @@
+# Managed by gryonixNexus — Server Dashboard command whitelist.
+# sudo matches these commands verbatim; do not add flags client-side.
+admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart sshd
+admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker ps
+admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-container-ctl.sh
+admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-uninstall.sh
+admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-agent-bootstrap.sh
+admin ALL=(ALL) NOPASSWD: /usr/local/bin/gryonixnexusd bridge
+admin ALL=(ALL) NOPASSWD: /usr/local/bin/gryonixnexusd pair-code
+admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-backup-ctl.sh
+admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-update-ctl.sh
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker ps -a
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker restart vaultwarden
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker start vaultwarden
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker stop vaultwarden
+admin ALL=(ALL) NOPASSWD: /bin/tar czf /opt/backups/vaultwarden/vaultwarden-backup.tar.gz -C / opt/vaultwarden/data
+admin ALL=(ALL) NOPASSWD: /bin/chown admin /opt/backups/vaultwarden/vaultwarden-backup.tar.gz
+admin ALL=(ALL) NOPASSWD: /opt/gryonixnexus-restore.sh
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker logs --tail 500 --timestamps vaultwarden
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p immich ps
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p immich restart
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p immich start
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p immich stop
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p immich logs --tail 500 --timestamps
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p photoprism ps
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p photoprism restart
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p photoprism start
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p photoprism stop
+admin ALL=(ALL) NOPASSWD: /usr/bin/docker compose -p photoprism logs --tail 500 --timestamps

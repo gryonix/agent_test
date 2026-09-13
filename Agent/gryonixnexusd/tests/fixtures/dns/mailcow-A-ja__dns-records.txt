@@ -1,0 +1,60 @@
+; example.com の DNS レコード — DNS プロバイダーに追加してください。
+; 形式: 名前  種別  値
+
+; 追加する内容 — 下の1ブロック = 事業者のフォームでの1レコード
+;
+;   種類: A
+;   名前: mail   — 多くの管理画面では mail だけ、一部では完全な mail.example.com を入力します
+;   値: 203.0.113.10
+;   TTL: 自動（または 3600）
+;
+;   種類: MX
+;   名前: @   — ドメイン自体 — @ と入力します（一部の画面では example.com）
+;   値: mail.example.com
+;   優先度: 10
+;   TTL: 自動（または 3600）
+;
+;   種類: TXT
+;   名前: @   — ドメイン自体 — @ と入力します（一部の画面では example.com）
+;   値: v=spf1 mx -all
+;   TTL: 自動（または 3600）
+;
+;   種類: TXT
+;   名前: _dmarc   — 多くの管理画面では _dmarc だけ、一部では完全な _dmarc.example.com を入力します
+;   値: v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com
+;   TTL: 自動（または 3600）
+;
+;   種類: A
+;   名前: relay   — 多くの管理画面では relay だけ、一部では完全な relay.example.com を入力します
+;   値: 203.0.113.10
+;   TTL: 自動（または 3600）
+;
+; Cloudflare: ここのすべてのレコードで Proxy status を「DNS only」（灰色の雲）にしてください。オレンジの雲はメールと VPN を壊します。
+;
+; 手入力の代わりにインポート
+; Cloudflare: DNS → Records →「Import and Export」→「Import DNS records」→ example.com-dns-zone.txt をアップロード。
+; その後、各レコードが「DNS only」（灰色の雲）になっているか確認してください。
+; 同じ example.com-dns-zone.txt は Route53、Google、Namecheap、GoDaddy、Gandi、Hetzner、deSEC、DNSimple、Porkbun でも使えます。
+; 表計算形式を求める管理画面には example.com-dns-records.csv を使ってください。
+
+
+; メールホストはサーバーのパブリック IP を指します。
+mail.example.com.    IN A    203.0.113.10
+
+; ドメイン宛のメールはホスト mail.example.com が受信します。
+example.com.    IN MX 10    mail.example.com.
+
+; SPF: ドメインのメールを送信できるのは MX のホストのみです。
+example.com.    IN TXT    "v=spf1 mx -all"
+
+; DMARC: SPF/DKIM に失敗したメールは隔離され、レポートは postmaster に送られます。
+_dmarc.example.com.    IN TXT    "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com"
+
+; PTR ホスト名の正引きレコード（逆引き DNS は同じ IP に解決される必要があります）。
+relay.example.com.    IN A    203.0.113.10
+
+; DKIM: 値はセットアップスクリプトがレポートに出力します（鍵はサーバー上で生成されます）。
+; dkim._domainkey.example.com.    IN TXT    "v=DKIM1; k=rsa; p=<セットアップスクリプトのレポートから>"
+
+; PTR（逆引き DNS）はここではなく、サーバーのプロバイダーの管理画面で設定します:
+; 203.0.113.10 -> relay.example.com — 到達率に不可欠です。

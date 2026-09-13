@@ -1,0 +1,4 @@
+hostname=files.example.com
+upstreamPort=8081
+adminGuard=true
+upstreamHTTPS=false

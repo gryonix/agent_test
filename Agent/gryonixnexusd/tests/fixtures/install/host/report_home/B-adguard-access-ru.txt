@@ -1,0 +1,22 @@
+
+log "ОТЧЁТ"
+echo "Домен:          example.com"
+echo "Туннель:        wg0 -> 203.0.113.10:51820 (полный туннель — исходящий трафик с IP VPS)"
+echo "PTR у провайдера: 203.0.113.10 -> relay.example.com (критично для доставляемости)."
+echo "Пароль бэкапов (сохраните — без него не восстановить шифрованный бэкап): $(cat /etc/gryonixnexus/autobackup.pass 2>/dev/null)"
+echo
+echo "Статус сервисов:"
+for s in nftables docker caddy; do
+  printf '  %-14s %s\n' "$s" "$(systemctl is-active "$s" || true)"
+done
+echo
+echo "Не забудьте DNS-записи из dns-records.txt — без них Caddy не выпустит сертификаты."
+
+echo
+echo "=== ДОСТУПЫ СЕРВИСОВ (сохраните) ==="
+echo "AdGuard Home: https://dns.example.com"
+echo "  Администратор: admin"
+echo "  Пароль (сгенерирован на сервере): $(grep '^ADGUARD_ADMIN_PASSWORD=' /opt/adguardhome/.env | cut -d= -f2-)"
+echo "  DNS-over-HTTPS для ваших устройств: https://dns.example.com/dns-query"
+echo "  Обычный DNS на порту 53 отвечает только на этом сервере: открытый в интернет резолвер за считанные дни используют для атак усиления."
+

@@ -1,0 +1,40 @@
+services:
+  vpnpanel:
+    build: /opt/gryonix-vpn-panel/build
+    image: gryonix-vpn-panel:local
+    container_name: vpnpanel
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+    env_file:
+      - /opt/gryonix-vpn-panel/.env
+    volumes:
+      - /opt/gryonix-vpn-panel/data:/data
+      # Manage the other protocol containers (restart/exec) and
+      # their config dirs. Unused mounts are harmless empty dirs.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/shadowsocks:/protocols/shadowsocks
+      - /opt/xray:/protocols/xray
+      - /opt/openvpn/data:/protocols/openvpn
+      - /opt/awgvpn/data:/protocols/amneziawg
+      # Read-only: lets the panel find mailcow's database
+      # credentials so it can offer the existing mailboxes as the
+      # sender for password-reset mail. The DIRECTORY is
+      # mounted, not mailcow.conf itself — docker materialises a
+      # missing bind source, and an empty mailcow.conf directory
+      # would make mailcow's own "already configured?" guard skip
+      # generate_config.sh on a later install. An empty directory
+      # is harmless: git clone still populates it.
+      - /opt/mailcow-dockerized:/protocols/mailcow:ro
+    extra_hosts:
+      # Reaching the host's SMTP listener (mailcow's Postfix) from
+      # inside the container.
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:51900:80"
+      # WireGuard (only listens when WireGuard is among the enabled
+      # protocols; harmless otherwise).
+      - "51820:51820/udp"

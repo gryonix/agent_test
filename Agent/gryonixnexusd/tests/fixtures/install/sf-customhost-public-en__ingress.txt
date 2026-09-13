@@ -1,0 +1,4 @@
+hostname=share.example.com
+upstreamPort=8088
+adminGuard=true
+upstreamHTTPS=false
