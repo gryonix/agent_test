@@ -15,6 +15,7 @@
 //! GRYONIXNEXUSD_SOCKET / GRYONIXNEXUSD_STATE_DIR for local runs (binding /run
 //! needs root).
 
+mod agent_update;
 mod api;
 mod backup;
 mod container_backup;
@@ -186,6 +187,11 @@ async fn main() -> anyhow::Result<()> {
     // `container_schedule`'s own note; the short version is that a per-group
     // unit would be a root-owned file no erase wrapper removes.
     container_schedule::spawn(store.clone());
+    // Closes the loop on whatever the PREVIOUS process attempted before it
+    // triggered its own restart — must run before `spawn` below, which reads
+    // the state this leaves behind for `GetAgentUpdateStatus`.
+    agent_update::reconcile_on_startup();
+    agent_update::spawn();
 
     let listener = bind_socket(&socket_path)?;
     tracing::info!(socket = %socket_path, "gryonixnexusd listening");

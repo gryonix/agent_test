@@ -164,6 +164,83 @@ service Update {
   rpc SetUpdateSchedule(SetUpdateScheduleRequest) returns (UpdatePolicy);
 }
 
+// The agent's OWN binary — separate from Update (which drives docker service
+// images through update-ctl.sh) because replacing gryonixnexusd means the
+// process answering this very RPC restarts partway through, which nothing
+// else in this schema does.
+//
+// **Why this exists at all.** An urgent fix to the agent itself could,
+// before this, only reach an already-installed server through a new client
+// app release — `Tools/pack-agent-sources.sh` bundles the agent's source
+// into the app, and the bootstrap only rebuilds when the app pushes a newer
+// bundle. If the app's own release is waiting on App Store review — up to a
+// week, per the owner (2026-09-13) — the fix waits with it. See
+// `docs_ai/gryonixNexus/ROADMAP.md`, "Обновление агента в обход App Store",
+// for the full plan; `gryonix/agent_test` (the repo `agent_update.rs`
+// checks) is the working name while the mechanism is being tried.
+//
+// **Confirmed, never silent** (owner, 2026-09-13): the agent's own
+// background check (`agent_update.rs`) only ever logs that something is
+// published. Nothing downloads, verifies or rebuilds anything until
+// `ApplyAgentUpdate` is called, which only the app does, which only happens
+// once the owner taps confirm.
+service AgentUpdate {
+  // What the background check last found, read back on demand — the same
+  // "cheap to ask, not a network round trip" shape `GetUpdatePolicy` answers
+  // for docker service updates — plus whether the LAST apply (if any)
+  // succeeded, which is how a client that reconnects after the restart below
+  // learns the outcome: the stream that reported it is long gone by then.
+  rpc GetAgentUpdateStatus(GetAgentUpdateStatusRequest) returns (AgentUpdateStatus);
+
+  // Download the published source, verify its digest, rebuild, and — only if
+  // every one of those succeeded — replace the running binary and restart.
+  // Streaming, like every other long-running operation here, but the stream
+  // WILL end without a trailer the instant the new binary actually starts:
+  // the process serving it is gone by definition. `job_id` is carried so a
+  // client CAN reattach through the ordinary `Jobs.WatchJob` for the
+  // narration up to that point, but the authoritative answer to "did it
+  // work" is `GetAgentUpdateStatus`, asked again once the client notices the
+  // stream closed early — a journal a now-dead process can no longer close
+  // itself would otherwise read as ABANDONED, which is true of that run but
+  // not of the outcome.
+  rpc ApplyAgentUpdate(ApplyAgentUpdateRequest) returns (stream AgentUpdateEvent);
+}
+
+message GetAgentUpdateStatusRequest {}
+
+message AgentUpdateStatus {
+  string installed_version = 1;
+  bool update_available = 2;
+  // The next two are set only when update_available.
+  string available_version = 3;
+  string available_tag = 4;
+  // Whether an apply has been attempted since this process started — "" /
+  // false until then, which a client reads as "nothing to report" rather
+  // than as a failure.
+  bool apply_attempted = 5;
+  bool last_apply_succeeded = 6;
+  // Set only when apply_attempted and NOT last_apply_succeeded.
+  string last_apply_reason = 7;
+}
+
+message ApplyAgentUpdateRequest {}
+
+message AgentUpdateEvent {
+  // Reuses JobPhase rather than a fourth "started/progress/completed/failed"
+  // enum for the same four states every other typed event here already
+  // spells out its own way.
+  JobPhase phase = 1;
+  // PROGRESS only: one line of narration ("downloading v0.0.110",
+  // "verifying the checksum", "building — this can take a few minutes", …).
+  string text = 2;
+  // FAILED only — the entire explanation the owner gets. Reached only on a
+  // refusal BEFORE anything was touched (no update available, a checksum
+  // mismatch, a build failure, the built binary failing its own smoke test):
+  // the running agent is untouched whenever this fires.
+  string reason = 3;
+  string job_id = 4;
+}
+
 // Removing ONE service, through the deployment's own uninstall wrapper.
 //
 // There is deliberately NO rpc for that wrapper's `--all`. The full erase stops
@@ -2375,6 +2452,11 @@ enum JobKind {
   // CrowdSec is not a catalog service and a returning client looks for it on
   // the security card rather than under a service id.
   JOB_KIND_SECURITY_CONTROL = 12;
+  // ApplyAgentUpdate's own journal — reattachable up to the moment the agent
+  // restarts, the same as every other kind here; see AgentUpdate's own doc
+  // for why the outcome past that point comes from GetAgentUpdateStatus
+  // instead of from following this job to its end.
+  JOB_KIND_AGENT_UPDATE = 13;
 }
 
 enum JobPhase {

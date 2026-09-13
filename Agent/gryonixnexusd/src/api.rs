@@ -38,7 +38,7 @@ use crate::vpn_clients;
 use crate::ddns;
 use crate::mesh;
 use crate::{
-    backup, container_backup, container_backup_run, container_removal, container_update, container_schedule, containers, control, discover, dkim, history, lockdown, mailbox,
+    agent_update, backup, container_backup, container_backup_run, container_removal, container_update, container_schedule, containers, control, discover, dkim, history, lockdown, mailbox,
     metrics, models, mods, pb, restore, security,
     uninstall, update,
 };
@@ -420,6 +420,20 @@ async fn route(req: Request<Incoming>, store: Arc<Mutex<Store>>) -> anyhow::Resu
         "/gryonixnexusd.v1.Update/RunUpdate" => {
             let req: pb::RunUpdateRequest = codec.decode_enveloped(&bytes)?;
             Ok(update::run_update(codec, req).await)
+        }
+        // The agent's own binary. GetAgentUpdateStatus is unary and cheap —
+        // it reads a cache, never the network, the same reason
+        // GetUpdatePolicy stays unary above. ApplyAgentUpdate streams like
+        // every other long-running operation, but see agent_update.rs's own
+        // module doc for the one way it differs from all of them: the
+        // process answering it restarts partway through.
+        "/gryonixnexusd.v1.AgentUpdate/GetAgentUpdateStatus" => {
+            let req: pb::GetAgentUpdateStatusRequest = codec.decode(&bytes)?;
+            Ok(agent_update::get_agent_update_status(codec, req).await)
+        }
+        "/gryonixnexusd.v1.AgentUpdate/ApplyAgentUpdate" => {
+            let req: pb::ApplyAgentUpdateRequest = codec.decode_enveloped(&bytes)?;
+            Ok(agent_update::apply_agent_update(codec, req).await)
         }
         // The admin-guard toggle. Deployment-scoped like Update, and both RPCs
         // are unary: status/on/off/only are fast local operations (nftables +

@@ -102,7 +102,23 @@ ProtectSystem=full
 # Caddy, does NOT make its config directory writable to a namespace that was
 # built minutes earlier. The bootstrap therefore creates it before the unit
 # starts, the same answer /etc/caddy and /etc/nftables.d already have.
-ReadWritePaths=-/etc/gryonixnexus /etc/systemd/system -/etc/caddy -/etc/nftables.d -/etc/wireguard -/etc/sysctl.d -/etc/sudoers.d -/etc/crowdsec
+#
+# /usr/local/bin is the eighth, and unlike the rest it is a DIRECTORY grant
+# for a single-file reason: `agent_update.rs`'s ApplyAgentUpdate stages the
+# rebuilt binary in the agent's own state directory and `rename()`s it into
+# place, and rename(2) needs its destination's PARENT directory writable —
+# systemd bind-mounts a single FILE path read-write too, but that mounts only
+# the file's own inode, not the directory entry a rename has to create or
+# replace, and (being its own separate mount point) may not even share a
+# filesystem with the state directory the staged binary comes from, which
+# rename(2) requires. The directory is the smallest grant that actually
+# supports the operation this feature needs.
+# **Bootstraps itself, one version late.** A host already running an OLDER
+# unit (without this line) cannot self-update INTO this feature — the first
+# jump still has to arrive through the existing app-triggered SSH rebuild,
+# which also rewrites this unit file and reloads it; every apply after that
+# one runs under a namespace that already has this entry.
+ReadWritePaths=-/etc/gryonixnexus /etc/systemd/system -/etc/caddy -/etc/nftables.d -/etc/wireguard -/etc/sysctl.d -/etc/sudoers.d -/etc/crowdsec -/usr/local/bin
 
 [Install]
 WantedBy=multi-user.target
