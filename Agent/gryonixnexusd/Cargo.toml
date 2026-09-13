@@ -520,7 +520,7 @@ name = "gryonixnexusd"
 # the list draws, `ss` supplies the addresses with an SSH session open (the app
 # reaches this agent through a tunnel and cannot see its own), and every
 # mutating call re-reads the list from the host rather than echoing the request.
-version = "0.0.113"
+version = "0.0.114"
 edition = "2021"
 rust-version = "1.75"
 publish = false
@@ -550,6 +550,18 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # platform-specific external binary to depend on — unlike TLS, this is not a
 # surface worth re-implementing by spawning `sha256sum`/`shasum` instead.
 sha2 = "0.10"
+# Same reasoning as sha2, same module: agent_update.rs verifies latest.json's
+# signature against a key baked into this binary (SIGNING_PUBLIC_KEY_HEX) —
+# the one operation that has to work correctly for the update mechanism's
+# trust story to mean anything, and not one to shell out to a host's `openssl`
+# for (its version and Ed25519 support vary across the distributions this
+# binary runs on; chacha20poly1305's own doc above gives the same reason for
+# avoiding system OpenSSL). Verify-only: signing happens on the machine that
+# holds the private key, via Tools/sign-agent-release.py, never in this crate.
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
+# Decodes latest.json's base64 "signature" field. RFC 4648, no surprises —
+# not worth hand-rolling next to a crate this small and this audited.
+base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1"

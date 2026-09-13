@@ -19,21 +19,32 @@
 //! `install::mail::mailcow`'s API calls do: this crate carries no HTTP client
 //! dependency, and a handful of process spawns is not worth adding one for.
 //!
-//! **The restart is the one thing here with no live-host proof yet.** Every
-//! step up to and including the binary swap is ordinary file and process
-//! work this crate already does elsewhere; the swap itself needs
-//! `/usr/local/bin` writable inside `ProtectSystem=full`'s sandbox (see the
-//! unit's own `ReadWritePaths` comment) and `rename()` across two paths this
-//! reasoning says share a filesystem on an ordinary VPS but has not been
-//! measured doing so under the real mount namespace. Treat the swap-and-
-//! restart step the way this codebase treats anything else "measured live":
-//! not yet, until it has been.
+//! **Live-tested end to end on `a.grypak.de`, 2026-09-13** (see docs_ai's
+//! ROADMAP.md): check, download, `sha256`, docker build, smoke test, swap,
+//! restart, `reconcile_on_startup()`. The first run of that swap failed
+//! `EXDEV` — `built` and `bin_dest()` do not share a filesystem under
+//! `ProtectSystem=full`'s sandbox even with the whole directory granted —
+//! see [`swap_binary`]'s own doc for the fix, which is why it copies rather
+//! than renames directly from the staging tree.
+//!
+//! **Signed, not just hashed.** `sha256` alone only proves the download
+//! matches what `latest.json` claims — it says nothing about whether
+//! `latest.json` itself can be trusted, and it lives in the same repository
+//! a compromised account would rewrite along with the binary. Every
+//! manifest's `version`/`tag`/`sha256` triple is signed with an Ed25519 key
+//! that never touches `agent_test`; [`SIGNING_PUBLIC_KEY_HEX`] is the only
+//! half of that keypair this binary carries, and [`check`] refuses a
+//! manifest whose signature does not verify against it before trusting any
+//! of its fields. `Tools/agent-update-keygen.py` / `Tools/
+//! sign-agent-release.py` are the other side, run by hand on the machine
+//! that holds the private key — never in this crate.
 
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
 use bytes::Bytes;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::Sender;
@@ -45,6 +56,63 @@ use crate::pb;
 /// working name — and for tests, alongside the other env seams below.
 const MANIFEST_URL_ENV: &str = "GRYONIXNEXUSD_AGENT_UPDATE_MANIFEST_URL";
 const DEFAULT_MANIFEST_URL: &str = "https://raw.githubusercontent.com/gryonix/agent_test/main/latest.json";
+
+/// The other half of the keypair `Tools/agent-update-keygen.py` generated
+/// (2026-09-13) never leaves the machine that signs releases — this is the
+/// public half, safe to bake in and commit, and it is baked in ON PURPOSE:
+/// fetching it from `agent_test` instead would let whoever can rewrite that
+/// repo's binary also rewrite the key that is supposed to catch them. Losing
+/// the private key means rotating this constant in a NEW agent build before
+/// anything signed with the new key can be trusted — there is no recovery
+/// that does not go through a release.
+const SIGNING_PUBLIC_KEY_HEX: &str = "22e7be06fa63ad3319c386b23dfefaf0efc1e1f96560582bad42eeadecbb0be5";
+/// Test-only escape hatch — same seam pattern as [`MANIFEST_URL_ENV`]. A test
+/// fixture signs with its OWN keypair and points this at the matching public
+/// half, rather than either faking a signature against the real key (cannot
+/// — that is the point) or hardcoding the real private key into the test
+/// binary (defeats the point just as thoroughly).
+const SIGNING_PUBLIC_KEY_ENV: &str = "GRYONIXNEXUSD_AGENT_UPDATE_SIGNING_PUBLIC_KEY_HEX";
+
+fn signing_public_key() -> VerifyingKey {
+    let hex = std::env::var(SIGNING_PUBLIC_KEY_ENV).unwrap_or_else(|_| SIGNING_PUBLIC_KEY_HEX.to_string());
+    let bytes: [u8; 32] = hex_decode_32(&hex).expect("the signing public key must be 32 valid hex bytes");
+    VerifyingKey::from_bytes(&bytes).expect("the signing public key must be a valid Ed25519 point")
+}
+
+fn hex_decode_32(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in out.iter_mut().enumerate() {
+        *chunk = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// What [`sign-agent-release.py`] signs and what this verifies — `url` is
+/// deliberately excluded, see that script's own doc for why.
+fn signed_payload(manifest: &Manifest) -> Vec<u8> {
+    format!("{}\n{}\n{}\n", manifest.version, manifest.tag, manifest.sha256).into_bytes()
+}
+
+/// Refuses a manifest whose signature does not verify against
+/// [`SIGNING_PUBLIC_KEY_HEX`] — called before ANY of the manifest's fields
+/// are trusted, so a repo that can rewrite `latest.json` freely still cannot
+/// make this agent download, verify or run anything it did not sign.
+fn verify_manifest_signature(manifest: &Manifest) -> Result<(), String> {
+    use base64::Engine;
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&manifest.signature)
+        .map_err(|err| format!("manifest signature is not valid base64: {err}"))?;
+    let sig_bytes: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| "manifest signature is not 64 bytes".to_string())?;
+    let signature = Signature::from_bytes(&sig_bytes);
+    signing_public_key()
+        .verify(&signed_payload(manifest), &signature)
+        .map_err(|_| "manifest signature does not verify".to_string())
+}
 
 /// Checked twice a day, the same "not hourly" reasoning `AppUpdate.kt`'s own
 /// `INTERVAL_MS` gives for the Android app's update check: a release does
@@ -121,6 +189,9 @@ pub struct Manifest {
     pub tag: String,
     pub url: String,
     pub sha256: String,
+    /// Base64 Ed25519 signature over [`signed_payload`] — checked in
+    /// [`check`] before any other field is trusted.
+    pub signature: String,
 }
 
 /// What [`check`] answers when the manifest names something newer than the
@@ -148,6 +219,7 @@ static LAST_CHECK: std::sync::Mutex<Option<AvailableUpdate>> = std::sync::Mutex:
 pub async fn check(installed: &str) -> Result<Option<AvailableUpdate>, String> {
     let body = fetch_manifest().await?;
     let manifest: Manifest = serde_json::from_str(&body).map_err(|err| format!("malformed manifest: {err}"))?;
+    verify_manifest_signature(&manifest).map_err(|err| format!("refusing an unsigned or forged manifest: {err}"))?;
     if is_newer(&manifest.version, installed) {
         Ok(Some(AvailableUpdate { manifest }))
     } else {
@@ -650,6 +722,31 @@ mod tests {
         dir
     }
 
+    // ──────────────────────────── manifest signing ─────────────────────────
+    // A fixed keypair, generated once for this test module only — nothing to
+    // do with SIGNING_PUBLIC_KEY_HEX, and never meant to sign anything real.
+    // Tests point SIGNING_PUBLIC_KEY_ENV at TEST_PUBLIC_KEY_HEX so `check()`
+    // verifies fixtures against THIS key rather than the production one,
+    // which no test has (or should have) the private half of.
+    const TEST_PRIVATE_KEY_HEX: &str = "f10c702fd5a5263b92ccd3a5cd3463159ce7fc07f634cf2bde1afaeb07dacd58";
+    const TEST_PUBLIC_KEY_HEX: &str = "48944c96c921bac5e29136ddb80f73254530c00b6cc712ca4a78e56e5bb70f18";
+
+    fn test_signing_key() -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&hex_decode_32(TEST_PRIVATE_KEY_HEX).unwrap())
+    }
+
+    /// Builds a `latest.json` body signed with [`test_signing_key`] — the
+    /// fixture every `check()` test below starts from, tampered with per
+    /// case where a test needs an invalid one.
+    fn signed_manifest_json(version: &str, tag: &str, url: &str, sha256: &str) -> String {
+        use ed25519_dalek::Signer;
+        let manifest = Manifest { version: version.into(), tag: tag.into(), url: url.into(), sha256: sha256.into(), signature: String::new() };
+        let signature = test_signing_key().sign(&signed_payload(&manifest));
+        use base64::Engine;
+        let signature = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+        format!(r#"{{"version":"{version}","tag":"{tag}","url":"{url}","sha256":"{sha256}","signature":"{signature}"}}"#)
+    }
+
     // ─────────────────────────── version comparison ───────────────────────
 
     #[test]
@@ -686,18 +783,22 @@ mod tests {
         path
     }
 
+    /// Every `check()` test below sets both seams (the curl stub AND the test
+    /// public key) before awaiting and clears both after — a helper that
+    /// only SET them around a lazily-constructed future would remove the env
+    /// vars before `check()` actually ran, since futures do nothing until
+    /// polled, so this stays inline rather than becoming one.
     #[tokio::test]
     async fn a_newer_manifest_version_is_reported() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let dir = sandbox("newer");
-        let curl = stub_curl(
-            &dir,
-            r#"{"version":"0.0.999","tag":"v0.0.999","url":"https://example.com/x.tar.gz","sha256":"deadbeef"}"#,
-            0,
-        );
+        let body = signed_manifest_json("0.0.999", "v0.0.999", "https://example.com/x.tar.gz", "deadbeef");
+        let curl = stub_curl(&dir, &body, 0);
         std::env::set_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN", &curl);
+        std::env::set_var(SIGNING_PUBLIC_KEY_ENV, TEST_PUBLIC_KEY_HEX);
         let result = check("0.0.108").await;
         std::env::remove_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN");
+        std::env::remove_var(SIGNING_PUBLIC_KEY_ENV);
         let _ = std::fs::remove_dir_all(&dir);
 
         let update = result.unwrap().expect("a newer version must be reported");
@@ -709,17 +810,54 @@ mod tests {
     async fn a_manifest_that_is_not_newer_reports_nothing() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let dir = sandbox("current");
-        let curl = stub_curl(
-            &dir,
-            r#"{"version":"0.0.108","tag":"v0.0.108","url":"https://example.com/x.tar.gz","sha256":"deadbeef"}"#,
-            0,
-        );
+        let body = signed_manifest_json("0.0.108", "v0.0.108", "https://example.com/x.tar.gz", "deadbeef");
+        let curl = stub_curl(&dir, &body, 0);
         std::env::set_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN", &curl);
+        std::env::set_var(SIGNING_PUBLIC_KEY_ENV, TEST_PUBLIC_KEY_HEX);
         let result = check("0.0.108").await;
         std::env::remove_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN");
+        std::env::remove_var(SIGNING_PUBLIC_KEY_ENV);
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(result.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_manifest_with_a_tampered_field_is_rejected() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = sandbox("tampered");
+        // Signed for 0.0.999, then the sha256 an attacker wants trusted is
+        // swapped in AFTER signing — the signature no longer covers this
+        // body, so this must be rejected even though the JSON is well-formed
+        // and the version really would be newer.
+        let body = signed_manifest_json("0.0.999", "v0.0.999", "https://example.com/x.tar.gz", "deadbeef")
+            .replace("deadbeef", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd");
+        let curl = stub_curl(&dir, &body, 0);
+        std::env::set_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN", &curl);
+        std::env::set_var(SIGNING_PUBLIC_KEY_ENV, TEST_PUBLIC_KEY_HEX);
+        let result = check("0.0.108").await;
+        std::env::remove_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN");
+        std::env::remove_var(SIGNING_PUBLIC_KEY_ENV);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let err = result.expect_err("a tampered manifest must not be trusted");
+        assert!(err.contains("signature"), "the failure must name the reason: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_manifest_with_an_invalid_signature_field_is_rejected() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = sandbox("bad-sig-field");
+        let body = r#"{"version":"0.0.999","tag":"v0.0.999","url":"https://example.com/x.tar.gz","sha256":"deadbeef","signature":"not-base64!!"}"#;
+        let curl = stub_curl(&dir, body, 0);
+        std::env::set_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN", &curl);
+        std::env::set_var(SIGNING_PUBLIC_KEY_ENV, TEST_PUBLIC_KEY_HEX);
+        let result = check("0.0.108").await;
+        std::env::remove_var("GRYONIXNEXUSD_AGENT_UPDATE_CURL_BIN");
+        std::env::remove_var(SIGNING_PUBLIC_KEY_ENV);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(result.is_err());
     }
 
     #[tokio::test]
